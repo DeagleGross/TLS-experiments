@@ -58,8 +58,12 @@ SSL_CTX* create_ssl_context() {
         return NULL;
     }
 
-    // Use modern, efficient cipher suites (avoid RSA key exchange)
-    SSL_CTX_set_cipher_list(ctx, "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256");
+    // Force TLS 1.3 only
+    SSL_CTX_set_min_proto_version(ctx, TLS1_3_VERSION);
+    SSL_CTX_set_max_proto_version(ctx, TLS1_3_VERSION);
+    
+    // TLS 1.3 ciphersuites (note: different API than TLS 1.2)
+    SSL_CTX_set_ciphersuites(ctx, "TLS_AES_256_GCM_SHA384:TLS_AES_128_GCM_SHA256");
     
     // Disable session resumption - force full handshake every time
     SSL_CTX_set_session_cache_mode(ctx, SSL_SESS_CACHE_OFF);
@@ -83,6 +87,8 @@ void print_stats() {
 }
 
 int handle_tls_handshake(client_context_t *client, int epoll_fd) {
+    // Call SSL_do_handshake ONCE per event, just like nginx
+    // Don't loop - return to epoll and wait for next event
     int ret = SSL_do_handshake(client->ssl);
     
     if (ret == 1) {
@@ -90,8 +96,8 @@ int handle_tls_handshake(client_context_t *client, int epoll_fd) {
         client->handshake_complete = 1;
         handshakes_completed++;
         
-        // Send a simple response and close
-        const char *response = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
+        // Send a simple response and close immediately
+        const char *response = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
         SSL_write(client->ssl, response, strlen(response));
         
         return 1; // Signal to close connection
@@ -100,25 +106,30 @@ int handle_tls_handshake(client_context_t *client, int epoll_fd) {
     int err = SSL_get_error(client->ssl, ret);
     
     if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
-        // Need to wait for I/O, modify epoll event
+        // Need to wait for I/O - modify epoll to watch for the right event
         struct epoll_event ev;
         ev.data.ptr = client;
         ev.events = (err == SSL_ERROR_WANT_READ) ? EPOLLIN : EPOLLOUT;
-        ev.events |= EPOLLET; // Edge-triggered
+        ev.events |= EPOLLET;
         
         epoll_ctl(epoll_fd, EPOLL_CTL_MOD, client->fd, &ev);
-        return 0; // Continue
+        return 0; // Continue - will be called again on next epoll event
     }
     
-    // Error occurred
-    handshakes_failed++;
+    // Error occurred (but don't log client disconnects as errors)
+    if (err != SSL_ERROR_SYSCALL && err != SSL_ERROR_ZERO_RETURN) {
+        handshakes_failed++;
+    } else {
+        // Client disconnected - still count as failed but don't spam logs
+        handshakes_failed++;
+    }
     return -1;
 }
 
 int main(int argc, char *argv[]) {
     int port = 8443;
-    const char *cert_file = "certs/server.crt";
-    const char *key_file = "certs/server.key";
+    const char *cert_file = "certs/server-p384.crt";
+    const char *key_file = "certs/server-p384.key";
     
     if (argc >= 2) port = atoi(argv[1]);
     if (argc >= 3) cert_file = argv[2];
@@ -212,9 +223,26 @@ int main(int argc, char *argv[]) {
         int nfds = epoll_wait(epoll_fd, events, MAX_EVENTS, 1000);
         
         if (nfds < 0) {
-            if (errno == EINTR) continue;
+            if (errno == EINTR) {
+                // Signal received, will exit loop
+                continue;
+            }
             perror("epoll_wait");
             break;
+        }
+        
+        // Print periodic stats every 5 seconds
+        static time_t last_stats_time = 0;
+        time_t current_time = time(NULL);
+        if (current_time - last_stats_time >= 5) {
+            struct timespec now;
+            clock_gettime(CLOCK_MONOTONIC, &now);
+            double elapsed = (now.tv_sec - start_time.tv_sec) + 
+                           (now.tv_nsec - start_time.tv_nsec) / 1e9;
+            printf("[%ld] Handshakes: %lu completed, %lu failed, Rate: %.2f/sec\n",
+                   current_time, handshakes_completed, handshakes_failed,
+                   handshakes_completed / elapsed);
+            last_stats_time = current_time;
         }
         
         for (int i = 0; i < nfds; i++) {
@@ -250,20 +278,15 @@ int main(int argc, char *argv[]) {
                     ctx->handshake_complete = 0;
                     clock_gettime(CLOCK_MONOTONIC, &ctx->start_time);
                     
-                    // Add to epoll
+                    // Add to epoll - only register EPOLLIN initially
+                    // EPOLLOUT will be added by handle_tls_handshake if needed
                     struct epoll_event client_ev;
                     client_ev.events = EPOLLIN | EPOLLET;
                     client_ev.data.ptr = ctx;
                     epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_fd, &client_ev);
                     
-                    // Try handshake immediately
-                    int result = handle_tls_handshake(ctx, epoll_fd);
-                    if (result != 0) {
-                        epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, NULL);
-                        SSL_free(ctx->ssl);
-                        close(ctx->fd);
-                        free(ctx);
-                    }
+                    // Don't try handshake immediately - wait for client to send data
+                    // The handshake will be triggered when EPOLLIN fires
                 }
             } else {
                 // Handle client I/O
@@ -272,8 +295,13 @@ int main(int argc, char *argv[]) {
                 int result = handle_tls_handshake(ctx, epoll_fd);
                 if (result != 0) {
                     epoll_ctl(epoll_fd, EPOLL_CTL_DEL, ctx->fd, NULL);
-                    SSL_free(ctx->ssl);
-                    close(ctx->fd);
+                    if (ctx->ssl) {
+                        SSL_shutdown(ctx->ssl);
+                        SSL_free(ctx->ssl);
+                    }
+                    if (ctx->fd >= 0) {
+                        close(ctx->fd);
+                    }
                     free(ctx);
                 }
             }

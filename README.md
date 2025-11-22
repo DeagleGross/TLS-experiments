@@ -1,6 +1,12 @@
 # TLS tests
 
-> C server
+## Build
+
 1) `make`
-2) `./src-c/tls_handshake_server 8443`
-3) run `wrk -t4 -c50 -d10s https://localhost:8443/ --latency` client test
+2) run server like `./src/tls_handshake_server`
+3) run client load like _a)_ `cd scripts` _b)_ `./benchmark.sh`
+
+## Async server wrk
+rps ~ 5500
+
+## Sync server wrk

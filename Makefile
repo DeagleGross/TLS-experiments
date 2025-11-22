@@ -2,11 +2,17 @@ CC = gcc
 CFLAGS = -Wall -O3 -march=native
 LDFLAGS = -lssl -lcrypto -lpthread
 
-TARGETS = src-c/tls_handshake_server
+TARGETS = src/tls_handshake_server src/tls_handshake_server_sync src/tls_handshake_server_async_mt
 
 all: $(TARGETS)
 
-src-c/tls_handshake_server: src-c/tls_handshake_server.c
+src/tls_handshake_server: src/tls_handshake_server.c
+	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
+
+src/tls_handshake_server_sync: src/tls_handshake_server_sync.c
+	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
+
+src/tls_handshake_server_async_mt: src/tls_handshake_server_async_mt.c
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
 clean:
