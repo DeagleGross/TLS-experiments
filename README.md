@@ -144,3 +144,15 @@ Requests/sec:  6506.50
   │ 125 conns   │ │ 125 conns   │ │ 125 conns   │ │ 125 conns   │
   └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘
 ```
+
+## Dotnet apps
+
+In order to verify idea works, I built the dotnet apps that use the existing `SslStream` with `AuthenticateAsServerAsync()` API, or the async-ssl code (does not exist yet).
+
+To run them:
+- `cd` to repo root
+- `docker-compose --file <yml>.yml up --build` e.g.
+  ```
+  docker-compose --file .\compose-asyncssl.yml up --build
+  ```
+- do test via wrk `wrk -t12 -c400 -d30s https://localhost:5001`
