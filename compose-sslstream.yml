@@ -1,8 +1,8 @@
 version: '3.8'
 
 services:
-  dotnet-sslstream-baseline:
-    container_name: sslstream-baseline
+  dotnet-ssl-sslstream:
+    container_name: ssl-sslstream
     build:
       context: ./src-dotnet/SslStreamConsole
       dockerfile: Dockerfile

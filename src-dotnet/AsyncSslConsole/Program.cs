@@ -1,10 +1,8 @@
 ﻿using System.Net;
-using System.Net.Security;
 using System.Net.Sockets;
-using System.Security.Authentication;
-using System.Security.Cryptography.X509Certificates;
 using System.Diagnostics;
 using System.Buffers;
+using AsyncSslConsole.Ssl;
 
 namespace AsyncSslConsole;
 
@@ -13,18 +11,26 @@ class Program
     private static int _handshakeCount = 0;
     private static int _connectionCount = 0;
     private static int _errorCount = 0;
+    private static SslContext? _sslContext;
 
     static async Task Main(string[] args)
     {
-        const int port = 5001;
+        const int port = 5002;
 
-        Console.WriteLine("=== Minimal SslStream Server ===");
+        Console.WriteLine("=== Direct OpenSSL TLS Server (Sync Version) ===");
         Console.WriteLine();
 
-        // Load existing certificate
-        var certificate = LoadCertificate();
-        Console.WriteLine($"Certificate: {certificate.Subject}");
-        Console.WriteLine($"Thumbprint: {certificate.Thumbprint}");
+        // Find certificate paths
+        var (certPath, keyPath) = FindCertificatePaths();
+        if (certPath == null || keyPath == null)
+        {
+            Console.WriteLine("ERROR: No certificate files found!");
+            return;
+        }
+
+        // Create SSL context (shared across all connections)
+        _sslContext = new SslContext(certPath, keyPath);
+        Console.WriteLine($"Certificate loaded from: {certPath}");
         Console.WriteLine();
 
         // Start metrics reporting
@@ -46,7 +52,7 @@ class Program
                 Interlocked.Increment(ref _connectionCount);
 
                 // Fire and forget - handle connection asynchronously
-                _ = Task.Run(() => HandleConnectionAsync(client, certificate));
+                _ = Task.Run(() => HandleConnectionSync(client));
             }
         }
         catch (Exception ex)
@@ -56,64 +62,56 @@ class Program
         finally
         {
             listener.Stop();
+            _sslContext?.Dispose();
         }
     }
 
-    private static async Task HandleConnectionAsync(TcpClient client, X509Certificate2 certificate)
+    private static void HandleConnectionSync(TcpClient tcpClient)
     {
+        Socket? socket = null;
+        SslConnection? sslConn = null;
+
         try
         {
-            client.NoDelay = true;
+            // Get the underlying socket
+            socket = tcpClient.Client;
+            socket.NoDelay = true;
 
-            await using var stream = client.GetStream();
-            await using var sslStream = new SslStream(stream, leaveInnerStreamOpen: false);
+            // Create SSL connection
+            sslConn = new SslConnection(_sslContext!, socket);
 
             var sw = Stopwatch.StartNew();
 
-            // This is the key call we're benchmarking
-            await sslStream.AuthenticateAsServerAsync(
-                serverCertificate: certificate,
-                clientCertificateRequired: false,
-                enabledSslProtocols: SslProtocols.Tls12 | SslProtocols.Tls13,
-                checkCertificateRevocation: false);
+            // Perform SSL handshake (blocking for now)
+            bool handshakeComplete = false;
+            while (!handshakeComplete)
+            {
+                handshakeComplete = sslConn.DoHandshake();
+                
+                // In sync mode, DoHandshake will block until complete
+                // or throw exception on error
+            }
 
             sw.Stop();
-
             Interlocked.Increment(ref _handshakeCount);
 
-            // Read some data and send response (minimal HTTP-like exchange)
-            byte[] buffer = null!;
+            // Read HTTP request
+            byte[] buffer = ArrayPool<byte>.Shared.Rent(4096);
             try
             {
-                buffer = ArrayPool<byte>.Shared.Rent(4096);
-                int bytesRead = await sslStream.ReadAsync(buffer, 0, buffer.Length);
+                int bytesRead = sslConn.Read(buffer, 0, buffer.Length);
 
                 if (bytesRead > 0)
                 {
                     // Send minimal HTTP response
                     var response = "HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello, World!"u8.ToArray();
-                    await sslStream.WriteAsync(response, 0, response.Length);
-                    await sslStream.FlushAsync();
+                    sslConn.Write(response, 0, response.Length);
                 }
-            }
-            catch (Exception ex)
-            {
-                Interlocked.Increment(ref _errorCount);
-                Console.WriteLine($"Data exchange error: {ex.Message}");
             }
             finally
             {
-                if (buffer is not null)
-                {
-                    ArrayPool<byte>.Shared.Return(buffer);
-                }
-
+                ArrayPool<byte>.Shared.Return(buffer);
             }
-        }
-        catch (AuthenticationException ex)
-        {
-            Interlocked.Increment(ref _errorCount);
-            Console.WriteLine($"Authentication failed: {ex.Message}");
         }
         catch (Exception ex)
         {
@@ -122,7 +120,9 @@ class Program
         }
         finally
         {
-            client.Close();
+            sslConn?.Dispose();
+            socket?.Close();
+            tcpClient?.Close();
         }
     }
 
@@ -150,11 +150,8 @@ class Program
         }
     }
 
-    private static X509Certificate2 LoadCertificate()
+    private static (string? certPath, string? keyPath) FindCertificatePaths()
     {
-        // Try to load from certs directory
-        // In Docker: /app/certs
-        // In development: ../../certs
         var basePaths = new[]
         {
             Path.Combine("certs"),  // Docker: /app/certs
@@ -165,72 +162,18 @@ class Program
         {
             var certPath = Path.Combine(basePath, "server.crt");
             var keyPath = Path.Combine(basePath, "server.key");
-            var certPathP384 = Path.Combine(basePath, "server-p384.crt");
-            var keyPathP384 = Path.Combine(basePath, "server-p384.key");
 
-            // Try standard cert first
             if (File.Exists(certPath) && File.Exists(keyPath))
-            {
-                Console.WriteLine($"Loading certificate from: {certPath}");
-                return LoadCertificateFromPemFiles(certPath, keyPath);
-            }
-            // Try p384 cert
-            else if (File.Exists(certPathP384) && File.Exists(keyPathP384))
-            {
-                Console.WriteLine($"Loading certificate from: {certPathP384}");
-                return LoadCertificateFromPemFiles(certPathP384, keyPathP384);
-            }
+                return (certPath, keyPath);
+
+            // Try p384
+            certPath = Path.Combine(basePath, "server-p384.crt");
+            keyPath = Path.Combine(basePath, "server-p384.key");
+
+            if (File.Exists(certPath) && File.Exists(keyPath))
+                return (certPath, keyPath);
         }
 
-        Console.WriteLine("No existing certificates found, generating new one...");
-        return GenerateSelfSignedCertificate();
-    }
-
-    private static X509Certificate2 LoadCertificateFromPemFiles(string certPath, string keyPath)
-    {
-        // Read PEM files
-        var certPem = File.ReadAllText(certPath);
-        var keyPem = File.ReadAllText(keyPath);
-
-        // Load using .NET's PEM support
-        var cert = X509Certificate2.CreateFromPem(certPem, keyPem);
-
-        // Need to export and re-import to get a cert with private key that works on all platforms
-        var certBytes = cert.Export(X509ContentType.Pkcs12);
-        return new X509Certificate2(certBytes);
-    }
-
-    private static X509Certificate2 GenerateSelfSignedCertificate()
-    {
-        // Fallback: generate a self-signed certificate
-        using var rsa = System.Security.Cryptography.RSA.Create(2048);
-        var request = new System.Security.Cryptography.X509Certificates.CertificateRequest(
-            "CN=localhost",
-            rsa,
-            System.Security.Cryptography.HashAlgorithmName.SHA256,
-            System.Security.Cryptography.RSASignaturePadding.Pkcs1);
-
-        request.CertificateExtensions.Add(
-            new System.Security.Cryptography.X509Certificates.X509KeyUsageExtension(
-                System.Security.Cryptography.X509Certificates.X509KeyUsageFlags.DigitalSignature,
-                critical: false));
-
-        request.CertificateExtensions.Add(
-            new System.Security.Cryptography.X509Certificates.X509EnhancedKeyUsageExtension(
-                new System.Security.Cryptography.OidCollection
-                {
-                    new System.Security.Cryptography.Oid("1.3.6.1.5.5.7.3.1") // Server Authentication
-                },
-                critical: false));
-
-        var sanBuilder = new System.Security.Cryptography.X509Certificates.SubjectAlternativeNameBuilder();
-        sanBuilder.AddDnsName("localhost");
-        request.CertificateExtensions.Add(sanBuilder.Build());
-
-        var certificate = request.CreateSelfSigned(
-            DateTimeOffset.Now.AddDays(-1),
-            DateTimeOffset.Now.AddYears(1));
-
-        return certificate;
+        return (null, null);
     }
 }

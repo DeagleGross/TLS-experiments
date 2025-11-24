@@ -20,11 +20,8 @@ WORKDIR /app
 # Copy published app
 COPY --from=build /app/publish .
 
-# Certificates will be mounted via docker-compose volume at /app/certs
-# No need to COPY them during build
-
 # Expose port
-EXPOSE 5001
+EXPOSE 5002
 
 # Run the application
 ENTRYPOINT ["dotnet", "AsyncSslConsole.dll"]

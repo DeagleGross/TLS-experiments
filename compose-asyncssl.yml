@@ -1,13 +1,13 @@
 version: '3.8'
 
 services:
-  dotnet-sslstream-baseline:
-    container_name: sslstream-baseline
+  dotnet-ssl-async:
+    container_name: ssl-async
     build:
       context: ./src-dotnet/AsyncSslConsole
       dockerfile: Dockerfile
     ports:
-      - "5001:5001"
+      - "5002:5002"
     volumes:
       # Mount certs directory from repository root
       - ./certs:/app/certs:ro
