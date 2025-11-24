@@ -1,9 +1,9 @@
 using System;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
-using AsyncSslConsole.Interop;
+using SyncSslConsole.Interop;
 
-namespace AsyncSslConsole.Ssl;
+namespace SyncSslConsole.Ssl;
 
 /// <summary>
 /// Represents a single SSL/TLS connection.
@@ -42,6 +42,9 @@ internal sealed unsafe class SslConnection : IDisposable
             OpenSsl.SSL_free(_ssl);
             throw new InvalidOperationException($"Failed to set socket FD: {OpenSsl.GetLastErrorString()}");
         }
+
+        // Set server mode - this is critical!
+        OpenSsl.SSL_set_accept_state(_ssl);
     }
 
     /// <summary>

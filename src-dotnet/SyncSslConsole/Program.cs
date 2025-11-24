@@ -2,9 +2,9 @@
 using System.Net.Sockets;
 using System.Diagnostics;
 using System.Buffers;
-using AsyncSslConsole.Ssl;
+using SyncSslConsole.Ssl;
 
-namespace AsyncSslConsole;
+namespace SyncSslConsole;
 
 class Program
 {

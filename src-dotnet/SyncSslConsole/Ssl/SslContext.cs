@@ -1,7 +1,7 @@
 using System;
-using AsyncSslConsole.Interop;
+using SyncSslConsole.Interop;
 
-namespace AsyncSslConsole.Ssl;
+namespace SyncSslConsole.Ssl;
 
 /// <summary>
 /// Wrapper around OpenSSL SSL_CTX.
@@ -55,9 +55,8 @@ internal sealed class SslContext : IDisposable
             throw new InvalidOperationException($"Private key does not match certificate: {OpenSsl.GetLastErrorString()}");
         }
 
-        // Set TLS 1.2 and 1.3
-        OpenSsl.SSL_CTX_set_min_proto_version(_ctx, OpenSsl.TLS1_2_VERSION);
-        OpenSsl.SSL_CTX_set_max_proto_version(_ctx, OpenSsl.TLS1_3_VERSION);
+        // TLS_server_method() in OpenSSL 3.x already supports TLS 1.2 and 1.3 by default
+        // No need to explicitly set min/max versions
 
         Console.WriteLine($"[SslContext] Initialized with cert: {certPath}");
     }

@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Security.Cryptography.X509Certificates;
 
-namespace AsyncSslConsole.Interop;
+namespace SyncSslConsole.Interop;
 
 /// <summary>
 /// OpenSSL interop definitions for direct SSL/TLS operations.
@@ -49,12 +49,6 @@ internal static unsafe class OpenSsl
     [DllImport(LibSsl, CallingConvention = CallingConvention.Cdecl)]
     public static extern long SSL_CTX_set_options(IntPtr ctx, long options);
 
-    [DllImport(LibSsl, CallingConvention = CallingConvention.Cdecl)]
-    public static extern int SSL_CTX_set_min_proto_version(IntPtr ctx, int version);
-
-    [DllImport(LibSsl, CallingConvention = CallingConvention.Cdecl)]
-    public static extern int SSL_CTX_set_max_proto_version(IntPtr ctx, int version);
-
     #endregion
 
     #region SSL Session Management
@@ -70,6 +64,9 @@ internal static unsafe class OpenSsl
 
     [DllImport(LibSsl, CallingConvention = CallingConvention.Cdecl)]
     public static extern int SSL_accept(IntPtr ssl);
+
+    [DllImport(LibSsl, CallingConvention = CallingConvention.Cdecl)]
+    public static extern void SSL_set_accept_state(IntPtr ssl);
 
     [DllImport(LibSsl, CallingConvention = CallingConvention.Cdecl)]
     public static extern int SSL_do_handshake(IntPtr ssl);
@@ -90,7 +87,7 @@ internal static unsafe class OpenSsl
 
     #region OpenSSL Initialization
 
-    [DllImport(LibCrypto, CallingConvention = CallingConvention.Cdecl)]
+    [DllImport(LibSsl, CallingConvention = CallingConvention.Cdecl)]
     public static extern int OPENSSL_init_ssl(ulong opts, IntPtr settings);
 
     [DllImport(LibCrypto, CallingConvention = CallingConvention.Cdecl)]
