@@ -152,31 +152,38 @@ class Program
 
     private static X509Certificate2 LoadCertificate()
     {
-        // Try to load from certs directory (prefer standard RSA cert)
-        var certPath = Path.Combine("..", "..", "certs", "server.crt");
-        var keyPath = Path.Combine("..", "..", "certs", "server.key");
+        // Try to load from certs directory
+        // In Docker: /app/certs
+        // In development: ../../certs
+        var basePaths = new[]
+        {
+            Path.Combine("certs"),  // Docker: /app/certs
+            Path.Combine("..", "..", "certs")  // Development
+        };
 
-        // Alternative: p384 cert
-        var certPathP384 = Path.Combine("..", "..", "certs", "server-p384.crt");
-        var keyPathP384 = Path.Combine("..", "..", "certs", "server-p384.key");
+        foreach (var basePath in basePaths)
+        {
+            var certPath = Path.Combine(basePath, "server.crt");
+            var keyPath = Path.Combine(basePath, "server.key");
+            var certPathP384 = Path.Combine(basePath, "server-p384.crt");
+            var keyPathP384 = Path.Combine(basePath, "server-p384.key");
 
-        // Try standard cert first
-        if (File.Exists(certPath) && File.Exists(keyPath))
-        {
-            Console.WriteLine($"Loading certificate from: {certPath}");
-            return LoadCertificateFromPemFiles(certPath, keyPath);
+            // Try standard cert first
+            if (File.Exists(certPath) && File.Exists(keyPath))
+            {
+                Console.WriteLine($"Loading certificate from: {certPath}");
+                return LoadCertificateFromPemFiles(certPath, keyPath);
+            }
+            // Try p384 cert
+            else if (File.Exists(certPathP384) && File.Exists(keyPathP384))
+            {
+                Console.WriteLine($"Loading certificate from: {certPathP384}");
+                return LoadCertificateFromPemFiles(certPathP384, keyPathP384);
+            }
         }
-        // Try p384 cert
-        else if (File.Exists(certPathP384) && File.Exists(keyPathP384))
-        {
-            Console.WriteLine($"Loading certificate from: {certPathP384}");
-            return LoadCertificateFromPemFiles(certPathP384, keyPathP384);
-        }
-        else
-        {
-            Console.WriteLine("No existing certificates found, generating new one...");
-            return GenerateSelfSignedCertificate();
-        }
+
+        Console.WriteLine("No existing certificates found, generating new one...");
+        return GenerateSelfSignedCertificate();
     }
 
     private static X509Certificate2 LoadCertificateFromPemFiles(string certPath, string keyPath)
