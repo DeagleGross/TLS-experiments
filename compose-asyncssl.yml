@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  dotnet-sslstream-baseline:
+    container_name: sslstream-baseline
+    build:
+      context: ./src-dotnet/AsyncSslConsole
+      dockerfile: Dockerfile
+    ports:
+      - "5001:5001"
+    volumes:
+      # Mount certs directory from repository root
+      - ./certs:/app/certs:ro
+    environment:
+      - DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false
+    restart: unless-stopped
+    networks:
+      - tls-experiments
+
+networks:
+  tls-experiments:
+    name: tls-experiments-network
