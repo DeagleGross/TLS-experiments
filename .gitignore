@@ -6,11 +6,6 @@ bin/
 *.so
 *.a
 
-# Certificates (keep private keys out of git)
-certs/*.key
-certs/*.crt
-certs/*.pem
-
 # Performance profiling
 *.pcap
 *.svg
