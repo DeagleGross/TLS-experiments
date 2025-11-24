@@ -4,8 +4,8 @@
 
 PORT=${1:-8443}
 DURATION=${2:-10}
-THREADS=${3:-4}
-CONNECTIONS=${4:-50}
+THREADS=${3:-64}
+CONNECTIONS=${4:-500}
 
 echo "=== TLS Handshake Benchmark ==="
 echo "Target: https://localhost:$PORT/"
@@ -20,4 +20,4 @@ wrk -t$THREADS -c$CONNECTIONS -d${DURATION}s \
 
 echo ""
 echo "Usage: $0 [port] [duration] [threads] [connections]"
-echo "Example: $0 8443 10 4 50"
+echo "Example: $0 8443 10 4 500"

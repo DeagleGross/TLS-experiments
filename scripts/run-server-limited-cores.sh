@@ -2,6 +2,9 @@
 
 # Run server with limited CPU cores (simulate cloud environment)
 
+# Usage: ./run-server-limited-cores.sh [cores] [server_path] [port]
+# Example: ./run-server-limited-cores.sh 4 ./bin/tls_handshake
+
 CORES=${1:-4}
 SERVER=${2:-./src/tls_handshake_server}
 PORT=${3:-8443}
@@ -17,3 +20,5 @@ echo ""
 
 # Use taskset to limit to specific cores
 taskset -c $CPU_LIST $SERVER $PORT
+
+echo "Finished server with limited CPU cores run."

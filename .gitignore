@@ -1,5 +1,5 @@
 # C binaries and objects
-src/tls_handshake_server
+bin/
 
 *.o
 *.out
