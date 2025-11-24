@@ -1,1 +1,9 @@
-<Solution/>
+<Solution>
+  <Folder Name="/certs/">
+    <File Path="certs/server-p384.crt" />
+    <File Path="certs/server-p384.key" />
+    <File Path="certs/server.crt" />
+    <File Path="certs/server.key" />
+  </Folder>
+  <Project Path="src-dotnet/SslStreamConsole/SslStreamConsole.csproj" Id="d7980457-2960-4ee3-ad28-7ec97c3947c6" />
+</Solution>
