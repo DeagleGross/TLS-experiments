@@ -17,7 +17,8 @@ class Program
     {
         const int port = 5003;
 
-        Console.WriteLine("=== Direct OpenSSL TLS Server (Sync Version) ===");
+        Console.WriteLine("=== Direct OpenSSL TLS Server (Async Non-Blocking Version) ===");
+        Console.WriteLine("Using nginx-style async I/O with epoll/IOCP");
         Console.WriteLine();
 
         // Find certificate paths
@@ -52,7 +53,7 @@ class Program
                 Interlocked.Increment(ref _connectionCount);
 
                 // Fire and forget - handle connection asynchronously
-                _ = Task.Run(() => HandleConnectionAsync(client));
+                _ = HandleConnectionAsync(client);
             }
         }
         catch (Exception ex)
@@ -66,7 +67,7 @@ class Program
         }
     }
 
-    private static void HandleConnectionAsync(TcpClient tcpClient)
+    private static async Task HandleConnectionAsync(TcpClient tcpClient)
     {
         Socket? socket = null;
         SslConnection? sslConn = null;
@@ -82,14 +83,14 @@ class Program
 
             var sw = Stopwatch.StartNew();
 
-            // Perform SSL handshake (blocking for now)
-            bool handshakeComplete = false;
-            while (!handshakeComplete)
+            // Perform ASYNC SSL handshake (non-blocking, event-driven!)
+            // This doesn't block a thread - uses epoll on Linux
+            bool success = await sslConn.DoHandshakeAsync();
+            
+            if (!success)
             {
-                handshakeComplete = sslConn.DoHandshake();
-
-                // In sync mode, DoHandshake will block until complete
-                // or throw exception on error
+                Interlocked.Increment(ref _errorCount);
+                return;
             }
 
             sw.Stop();

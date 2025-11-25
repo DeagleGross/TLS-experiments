@@ -125,4 +125,26 @@ internal static unsafe class OpenSsl
     }
 
     #endregion
+
+    #region BIO
+
+    [DllImport(LibCrypto)]
+    public static extern IntPtr BIO_s_mem();
+
+    [DllImport(LibCrypto)]
+    public static extern IntPtr BIO_new(IntPtr type);
+
+    [DllImport(LibCrypto)]
+    public static extern void SSL_set_bio(IntPtr ssl, IntPtr rbio, IntPtr wbio);
+
+    [DllImport(LibCrypto)]
+    public static extern int BIO_read(IntPtr bio, byte* buf, int len);
+
+    [DllImport(LibCrypto)]
+    public static extern int BIO_write(IntPtr bio, byte* buf, int len);
+
+    [DllImport(LibCrypto)]
+    public static extern int BIO_ctrl_pending(IntPtr bio);
+
+    #endregion
 }
