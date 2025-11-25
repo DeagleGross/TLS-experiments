@@ -1,24 +1,28 @@
-﻿using AsyncSslConsole.Ssl;
+﻿using BioSslConsole.Ssl;
 using System.Buffers;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 
-namespace AsyncSslConsole;
+namespace BioSslConsole;
 
 class Program
 {
     private static int _handshakeCount = 0;
     private static int _connectionCount = 0;
     private static int _errorCount = 0;
+    private static int _handshakeAttemptsTotal = 0;
+    private static int _handshakeOneShot = 0;  // Completed in first SSL_do_handshake
+    private static int _handshakeMultiRound = 0; // Required multiple rounds
     private static SslContext? _sslContext;
 
     static async Task Main(string[] args)
     {
         const int port = 5003;
 
-        Console.WriteLine("=== Direct OpenSSL TLS Server (Async Non-Blocking Version) ===");
-        Console.WriteLine("Using nginx-style async I/O with epoll/IOCP");
+        Console.WriteLine("=== BIO-Based Async SSL Server (Like SslStream) ===");
+        Console.WriteLine("Using memory BIOs + async I/O (epoll/IOCP)");
+        Console.WriteLine("No thread blocking - truly async!");
         Console.WriteLine();
 
         // Find certificate paths
@@ -53,7 +57,7 @@ class Program
                 Interlocked.Increment(ref _connectionCount);
 
                 // Fire and forget - handle connection asynchronously
-                _ = HandleConnectionAsync(client);
+                _ = Task.Run(() => HandleConnectionAsync(client));
             }
         }
         catch (Exception ex)
@@ -70,7 +74,7 @@ class Program
     private static async Task HandleConnectionAsync(TcpClient tcpClient)
     {
         Socket? socket = null;
-        SslConnection? sslConn = null;
+        BioSslConnection? sslConn = null;
 
         try
         {
@@ -78,15 +82,16 @@ class Program
             socket = tcpClient.Client;
             socket.NoDelay = true;
 
-            // Create SSL connection
-            sslConn = new SslConnection(_sslContext!, socket);
+            // Create BIO-based SSL connection (like SslStream does it!)
+            sslConn = new BioSslConnection(_sslContext!, socket);
 
             var sw = Stopwatch.StartNew();
 
-            // Perform ASYNC SSL handshake (non-blocking, event-driven!)
-            // This doesn't block a thread - uses epoll on Linux
+            // Perform ASYNC SSL handshake using memory BIOs
+            // This is truly async - only network I/O uses epoll/IOCP
+            // SSL_do_handshake, BIO_read, BIO_write are all memory operations (fast!)
             bool success = await sslConn.DoHandshakeAsync();
-            
+
             if (!success)
             {
                 Interlocked.Increment(ref _errorCount);
@@ -96,17 +101,24 @@ class Program
             sw.Stop();
             Interlocked.Increment(ref _handshakeCount);
 
-            // Read HTTP request
+            // Record handshake statistics
+            Interlocked.Add(ref _handshakeAttemptsTotal, sslConn.HandshakeAttempts);
+            if (sslConn.CompletedOneShot)
+                Interlocked.Increment(ref _handshakeOneShot);
+            else
+                Interlocked.Increment(ref _handshakeMultiRound);
+
+            // Read HTTP request (async!)
             byte[] buffer = ArrayPool<byte>.Shared.Rent(4096);
             try
             {
-                int bytesRead = sslConn.Read(buffer, 0, buffer.Length);
+                int bytesRead = await sslConn.ReadAsync(buffer, 0, buffer.Length);
 
                 if (bytesRead > 0)
                 {
-                    // Send minimal HTTP response
+                    // Send minimal HTTP response (async!)
                     var response = "HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello, World!"u8.ToArray();
-                    sslConn.Write(response, 0, response.Length);
+                    await sslConn.WriteAsync(response, 0, response.Length);
                 }
             }
             finally
@@ -141,10 +153,12 @@ class Program
             var handshakesPerSec = currentHandshakes - lastHandshakes;
             var connectionsPerSec = currentConnections - lastConnections;
 
+            var avgAttempts = currentHandshakes > 0 ? (double)_handshakeAttemptsTotal / currentHandshakes : 0;
             Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] " +
                             $"Connections: {currentConnections} ({connectionsPerSec}/s) | " +
                             $"Handshakes: {currentHandshakes} ({handshakesPerSec}/s) | " +
                             $"Errors: {_errorCount}");
+            Console.WriteLine($"  Handshake stats: One-shot={_handshakeOneShot}, Multi-round={_handshakeMultiRound}, Avg attempts={avgAttempts:F2}");
 
             lastHandshakes = currentHandshakes;
             lastConnections = currentConnections;

@@ -3,7 +3,7 @@ FROM mcr.microsoft.com/dotnet/nightly/sdk:10.0-preview AS build
 WORKDIR /src
 
 # Copy project file and restore dependencies
-COPY AsyncSslConsole.csproj .
+COPY BioSslConsole.csproj .
 RUN dotnet restore
 
 # Copy source code and build
@@ -24,4 +24,4 @@ COPY --from=build /app/publish .
 EXPOSE 5003
 
 # Run the application
-ENTRYPOINT ["dotnet", "AsyncSslConsole.dll"]
+ENTRYPOINT ["dotnet", "BioSslConsole.dll"]

@@ -1,6 +1,6 @@
-using AsyncSslConsole.Interop;
+using BioSslConsole.Interop;
 
-namespace AsyncSslConsole.Ssl;
+namespace BioSslConsole.Ssl;
 
 /// <summary>
 /// Wrapper around OpenSSL SSL_CTX.

@@ -11,6 +11,9 @@ class Program
     private static int _handshakeCount = 0;
     private static int _connectionCount = 0;
     private static int _errorCount = 0;
+    private static int _handshakeAttemptsTotal = 0;
+    private static int _handshakeOneShot = 0;  // Completed in first SSL_do_handshake
+    private static int _handshakeMultiRound = 0; // Required multiple rounds
     private static SslContext? _sslContext;
 
     static async Task Main(string[] args)
@@ -95,6 +98,13 @@ class Program
             sw.Stop();
             Interlocked.Increment(ref _handshakeCount);
 
+            // Record handshake statistics
+            Interlocked.Add(ref _handshakeAttemptsTotal, sslConn.HandshakeAttempts);
+            if (sslConn.CompletedOneShot)
+                Interlocked.Increment(ref _handshakeOneShot);
+            else
+                Interlocked.Increment(ref _handshakeMultiRound);
+
             // Read HTTP request
             byte[] buffer = ArrayPool<byte>.Shared.Rent(4096);
             try
@@ -140,10 +150,12 @@ class Program
             var handshakesPerSec = currentHandshakes - lastHandshakes;
             var connectionsPerSec = currentConnections - lastConnections;
 
+            var avgAttempts = currentHandshakes > 0 ? (double)_handshakeAttemptsTotal / currentHandshakes : 0;
             Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] " +
                             $"Connections: {currentConnections} ({connectionsPerSec}/s) | " +
                             $"Handshakes: {currentHandshakes} ({handshakesPerSec}/s) | " +
                             $"Errors: {_errorCount}");
+            Console.WriteLine($"  Handshake stats: One-shot={_handshakeOneShot}, Multi-round={_handshakeMultiRound}, Avg attempts={avgAttempts:F2}");
 
             lastHandshakes = currentHandshakes;
             lastConnections = currentConnections;

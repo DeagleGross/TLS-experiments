@@ -1,10 +1,10 @@
 version: '3.8'
 
 services:
-  dotnet-ssl-async:
-    container_name: ssl-async
+  dotnet-ssl-bio:
+    container_name: ssl-bio
     build:
-      context: ./src-dotnet/AsyncSslConsole
+      context: ./src-dotnet/BioSslConsole
       dockerfile: Dockerfile
     ports:
       - "5003:5003"

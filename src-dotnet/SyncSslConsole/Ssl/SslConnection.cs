@@ -15,8 +15,11 @@ internal sealed unsafe class SslConnection : IDisposable
     private readonly Socket _socket;
     private bool _disposed;
     private bool _handshakeComplete;
+    private int _handshakeAttempts = 0;
 
     public bool HandshakeComplete => _handshakeComplete;
+    public int HandshakeAttempts => _handshakeAttempts;
+    public bool CompletedOneShot => _handshakeAttempts == 1;
 
     public SslConnection(SslContext context, Socket socket)
     {
@@ -57,6 +60,7 @@ internal sealed unsafe class SslConnection : IDisposable
             return true;
 
         int ret = OpenSsl.SSL_do_handshake(_ssl);
+        _handshakeAttempts++;
         
         if (ret == 1)
         {

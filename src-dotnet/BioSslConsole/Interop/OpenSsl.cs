@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace AsyncSslConsole.Interop;
+namespace BioSslConsole.Interop;
 
 /// <summary>
 /// OpenSSL interop definitions for direct SSL/TLS operations.
@@ -111,6 +111,31 @@ internal static unsafe class OpenSsl
         ERR_error_string(error, buffer);
         return Marshal.PtrToStringAnsi((IntPtr)buffer) ?? "Unknown error";
     }
+
+    #endregion
+
+    #region BIO Operations
+
+    [DllImport(LibCrypto, CallingConvention = CallingConvention.Cdecl)]
+    public static extern IntPtr BIO_s_mem();
+
+    [DllImport(LibCrypto, CallingConvention = CallingConvention.Cdecl)]
+    public static extern IntPtr BIO_new(IntPtr type);
+
+    [DllImport(LibCrypto, CallingConvention = CallingConvention.Cdecl)]
+    public static extern void BIO_free(IntPtr bio);
+
+    [DllImport(LibSsl, CallingConvention = CallingConvention.Cdecl)]
+    public static extern void SSL_set_bio(IntPtr ssl, IntPtr rbio, IntPtr wbio);
+
+    [DllImport(LibCrypto, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int BIO_read(IntPtr bio, byte* buf, int len);
+
+    [DllImport(LibCrypto, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int BIO_write(IntPtr bio, byte* buf, int len);
+
+    [DllImport(LibCrypto, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int BIO_ctrl_pending(IntPtr bio);
 
     #endregion
 
