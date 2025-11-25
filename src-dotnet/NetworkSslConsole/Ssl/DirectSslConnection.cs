@@ -56,8 +56,9 @@ internal sealed class DirectSslConnection : IDisposable
 
     /// <summary>
     /// Performs async SSL handshake using direct socket FD (nginx-style).
-    /// Event-driven approach: calls SSL_do_handshake once, waits for I/O event, repeats.
-    /// No busy loop - truly event-driven like nginx with epoll.
+    /// TRUE event-driven: calls SSL_do_handshake once, waits for I/O event via async,
+    /// then the event loop (in Program.cs or here) calls again.
+    /// This matches nginx's epoll architecture exactly.
     /// </summary>
     public async Task<bool> DoHandshakeAsync()
     {
@@ -67,51 +68,36 @@ internal sealed class DirectSslConnection : IDisposable
 
         int attemptCount = 0;
 
-        // Event-driven handshake: call SSL_do_handshake once, wait for event, repeat
-        int ret = OpenSsl.SSL_do_handshake(_ssl);
-        attemptCount++;
-
-        // If handshake completed in one shot (rare but possible with session resumption)
-        if (ret == 1)
+        // Nginx-style event-driven loop
+        while (!_handshakeComplete)
         {
-            _handshakeComplete = true;
-            HandshakeAttempts = attemptCount;
-            CompletedOneShot = true;
-            return true;
-        }
+            // Step 1: Try SSL handshake ONCE (like nginx does per epoll event)
+            int ret = OpenSsl.SSL_do_handshake(_ssl);
+            attemptCount++;
 
-        // Wait for I/O events until handshake completes
-        // This is the nginx-style event loop
-        attemptCount = await AwaitHandshakeCompletionAsync(attemptCount);
+            if (ret == 1)
+            {
+                // Handshake complete!
+                _handshakeComplete = true;
+                HandshakeAttempts = attemptCount;
+                CompletedOneShot = (attemptCount == 1);
+                return true;
+            }
 
-        _handshakeComplete = true;
-        HandshakeAttempts = attemptCount;
-        CompletedOneShot = (attemptCount == 1);
-        return true;
-    }
-
-    /// <summary>
-    /// Event-driven handshake completion (nginx-style).
-    /// Waits for socket I/O events and calls SSL_do_handshake when ready.
-    /// This mimics nginx's epoll event loop for SSL handshakes.
-    /// </summary>
-    private async Task<int> AwaitHandshakeCompletionAsync(int attemptCount)
-    {
-        while (true)
-        {
-            // Get the last SSL error to know what we're waiting for
-            int error = OpenSsl.SSL_get_error(_ssl, 0);
+            // Step 2: Check what I/O event we need to wait for
+            int error = OpenSsl.SSL_get_error(_ssl, ret);
 
             switch (error)
             {
                 case OpenSsl.SSL_ERROR_WANT_READ:
-                    // Wait for socket to become readable (like epoll_wait with EPOLLIN)
-                    await WaitForReadableAsync();
+                    // Register interest in read event (like epoll_ctl with EPOLLIN)
+                    // When this completes, it means data arrived - retry handshake
+                    await WaitForSocketEventAsync(isRead: true);
                     break;
 
                 case OpenSsl.SSL_ERROR_WANT_WRITE:
-                    // Wait for socket to become writable (like epoll_wait with EPOLLOUT)
-                    await WaitForWritableAsync();
+                    // Register interest in write event (like epoll_ctl with EPOLLOUT)
+                    await WaitForSocketEventAsync(isRead: false);
                     break;
 
                 case OpenSsl.SSL_ERROR_SYSCALL:
@@ -122,18 +108,29 @@ internal sealed class DirectSslConnection : IDisposable
                     throw new InvalidOperationException($"Unknown SSL error during handshake: {error}");
             }
 
-            // Socket event fired - try handshake again (EXACTLY ONCE, like nginx)
-            int ret = OpenSsl.SSL_do_handshake(_ssl);
-            attemptCount++;
+            // Loop continues - will call SSL_do_handshake() again
+            // This is equivalent to nginx's event handler being called again when epoll fires
+        }
 
-            if (ret == 1)
-            {
-                // Handshake complete!
-                return attemptCount;
-            }
+        return true;
+    }
 
-            // If ret != 1, loop continues and we check error again
-            // This continues the event-driven state machine
+    /// <summary>
+    /// Wait for socket I/O event (nginx epoll equivalent).
+    /// This is like epoll_ctl(EPOLL_CTL_MOD, fd, EPOLLIN/EPOLLOUT) + epoll_wait().
+    /// When this returns, it means the socket is ready for the requested operation.
+    /// </summary>
+    private async Task WaitForSocketEventAsync(bool isRead)
+    {
+        if (isRead)
+        {
+            // Wait for EPOLLIN - socket has data to read
+            await WaitForReadableAsync();
+        }
+        else
+        {
+            // Wait for EPOLLOUT - socket can accept writes
+            await WaitForWritableAsync();
         }
     }
 
@@ -142,26 +139,34 @@ internal sealed class DirectSslConnection : IDisposable
 
     /// <summary>
     /// Wait for socket to become readable (nginx-style async I/O).
-    /// Uses a minimal read to trigger the async machinery.
+    /// This is the .NET equivalent of: epoll_ctl(EPOLL_CTL_MOD, fd, EPOLLIN) + epoll_wait()
+    /// The Socket.ReceiveAsync registers with IOCP/epoll and yields the thread.
+    /// When the OS detects readable data, it completes the Task.
     /// </summary>
     private async Task WaitForReadableAsync()
     {
-        // Use Socket.ReceiveAsync to wait for data
-        // This will complete when socket has data available
-        // We use a tiny buffer just to detect readability (like epoll_wait)
+        // CRITICAL: Use Socket.ReceiveAsync with MSG_PEEK
+        // This does NOT consume data (OpenSSL will read it via SSL_do_handshake)
+        // It ONLY waits for the socket to become readable
+        
+        // Allocate minimal buffer - we're just waiting for readability, not actually reading
         var buffer = ArrayPool<byte>.Shared.Rent(1);
         try
         {
-            // Peek at data without consuming it
-            // This is like epoll_wait(EPOLLIN) - just checking for readability
-            // Using MSG_PEEK so we don't consume the bytes (OpenSSL will read them)
+            // ReceiveAsync with Peek = epoll_wait(EPOLLIN)
+            // The OS kernel will signal when socket has data
+            // This is truly async - thread is released to thread pool
             await _socket.ReceiveAsync(
                 new Memory<byte>(buffer, 0, 1),
                 SocketFlags.Peek);
+            
+            // When we reach here, socket has data available
+            // Now SSL_do_handshake() can read it without blocking
         }
         catch (SocketException ex) when (ex.SocketErrorCode == SocketError.WouldBlock)
         {
-            // Socket not ready yet, that's fine - loop will retry
+            // Should not happen with async I/O, but handle gracefully
+            await Task.Yield();
         }
         finally
         {
@@ -171,18 +176,21 @@ internal sealed class DirectSslConnection : IDisposable
 
     /// <summary>
     /// Wait for socket to become writable (nginx-style async I/O).
+    /// This is the .NET equivalent of: epoll_ctl(EPOLL_CTL_MOD, fd, EPOLLOUT) + epoll_wait()
+    /// 
+    /// NOTE: .NET doesn't have a direct "poll for writable" API.
+    /// Sockets are usually writable, so this is rarely hit during handshake.
+    /// We use a small delay as a workaround.
+    /// 
+    /// TODO: Could potentially use Socket.SendAsync with zero bytes,
+    /// or implement proper writable polling via P/Invoke to poll()/select().
     /// </summary>
     private async Task WaitForWritableAsync()
     {
-        // For write readiness, we can use SendAsync with zero bytes
-        // Or we can do a small dummy send operation
-        // The cleanest approach: just wait a tiny bit and let the next handshake attempt proceed
-        // In nginx, this would use epoll_wait(EPOLLOUT)
-        
-        // .NET doesn't have a direct "wait for writable" API like epoll(EPOLLOUT)
-        // So we use a small delay and retry
-        // This is not ideal but works for the handshake case
-        await Task.Delay(1);
+        // For now, just yield and retry quickly
+        // In practice, sockets are almost always writable unless send buffer is full
+        // During TLS handshake, write amounts are small, so this is rare
+        await Task.Yield();
     }
 
     /// <summary>

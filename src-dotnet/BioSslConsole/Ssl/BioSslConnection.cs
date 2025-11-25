@@ -98,6 +98,8 @@ internal sealed class BioSslConnection : IDisposable
             switch (error)
             {
                 case OpenSsl.SSL_ERROR_WANT_READ:
+                    NeedsMoreDataCounter++;
+
                     // OpenSSL needs more encrypted data from network
                     // 1. First flush any pending output (handshake response)
                     await FlushOutputBioAsync();
@@ -123,6 +125,7 @@ internal sealed class BioSslConnection : IDisposable
 
     public int HandshakeAttempts { get; private set; }
     public bool CompletedOneShot { get; private set; }
+    public int NeedsMoreDataCounter { get; private set; }
 
     /// <summary>
     /// Reads encrypted data from network and writes it into OpenSSL's INPUT BIO.

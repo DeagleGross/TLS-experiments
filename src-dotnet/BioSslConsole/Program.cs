@@ -13,6 +13,7 @@ class Program
     private static int _errorCount = 0;
     private static int _handshakeAttemptsTotal = 0;
     private static int _handshakeOneShot = 0;  // Completed in first SSL_do_handshake
+    private static int _needsMoreDataCounter = 0;  // How many times ssl_do_handshake did ask for more data to write to input BIO
     private static int _handshakeMultiRound = 0; // Required multiple rounds
     private static SslContext? _sslContext;
 
@@ -108,6 +109,8 @@ class Program
             else
                 Interlocked.Increment(ref _handshakeMultiRound);
 
+            Interlocked.Add(ref _needsMoreDataCounter, sslConn.NeedsMoreDataCounter);
+
             // Read HTTP request (async!)
             byte[] buffer = ArrayPool<byte>.Shared.Rent(4096);
             try
@@ -158,7 +161,7 @@ class Program
                             $"Connections: {currentConnections} ({connectionsPerSec}/s) | " +
                             $"Handshakes: {currentHandshakes} ({handshakesPerSec}/s) | " +
                             $"Errors: {_errorCount}");
-            Console.WriteLine($"  Handshake stats: One-shot={_handshakeOneShot}, Multi-round={_handshakeMultiRound}, Avg attempts={avgAttempts:F2}");
+            Console.WriteLine($"  Handshake stats: One-shot={_handshakeOneShot}, Multi-round={_handshakeMultiRound} (needs more input BIO writes={_needsMoreDataCounter}), Avg attempts={avgAttempts:F2}");
 
             lastHandshakes = currentHandshakes;
             lastConnections = currentConnections;
