@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  dotnet-ssl-network:
+    container_name: ssl-network
+    build:
+      context: ./src-dotnet/NetworkSslConsole
+      dockerfile: Dockerfile
+    ports:
+      - "5004:5004"
+    volumes:
+      # Mount certs directory from repository root
+      - ./certs:/app/certs:ro
+    environment:
+      - DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false
+    restart: unless-stopped
+    networks:
+      - tls-experiments
+
+networks:
+  tls-experiments:
+    name: tls-experiments-network

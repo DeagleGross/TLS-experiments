@@ -8,4 +8,5 @@
   <Project Path="D:/code/TLS-experiments/src-dotnet/BioSslConsole/BioSslConsole.csproj" />
   <Project Path="D:/code/TLS-experiments/src-dotnet/SslStreamConsole/SslStreamConsole.csproj" />
   <Project Path="D:/code/TLS-experiments/src-dotnet/SyncSslConsole/SyncSslConsole.csproj" />
+  <Project Path="D:/code/TLS-experiments/src-dotnet/NetworkSslConsole/NetworkSslConsole.csproj" />
 </Solution>
