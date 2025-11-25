@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  dotnet-ssl-async:
+    container_name: ssl-async
+    build:
+      context: ./src-dotnet/AsyncSslConsole
+      dockerfile: Dockerfile
+    ports:
+      - "5003:5003"
+    volumes:
+      # Mount certs directory from repository root
+      - ./certs:/app/certs:ro
+    environment:
+      - DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false
+    restart: unless-stopped
+    networks:
+      - tls-experiments
+
+networks:
+  tls-experiments:
+    name: tls-experiments-network

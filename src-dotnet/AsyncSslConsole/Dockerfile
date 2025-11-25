@@ -3,7 +3,7 @@ FROM mcr.microsoft.com/dotnet/nightly/sdk:10.0-preview AS build
 WORKDIR /src
 
 # Copy project file and restore dependencies
-COPY SyncSslConsole.csproj .
+COPY AsyncSslConsole.csproj .
 RUN dotnet restore
 
 # Copy source code and build
@@ -21,7 +21,7 @@ WORKDIR /app
 COPY --from=build /app/publish .
 
 # Expose port
-EXPOSE 5002
+EXPOSE 5003
 
 # Run the application
-ENTRYPOINT ["dotnet", "SyncSslConsole.dll"]
+ENTRYPOINT ["dotnet", "AsyncSslConsole.dll"]

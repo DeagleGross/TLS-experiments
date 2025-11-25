@@ -5,6 +5,7 @@
     <File Path="certs/server.crt" />
     <File Path="certs/server.key" />
   </Folder>
-  <Project Path="src-dotnet/SyncSslConsole/SyncSslConsole.csproj" />
+  <Project Path="src-dotnet/AsyncSslConsole/AsyncSslConsole.csproj" Id="27e4dc0b-70a3-4b5e-8e75-f7c3a56e4695" />
   <Project Path="src-dotnet/SslStreamConsole/SslStreamConsole.csproj" />
+  <Project Path="src-dotnet/SyncSslConsole/SyncSslConsole.csproj" />
 </Solution>
