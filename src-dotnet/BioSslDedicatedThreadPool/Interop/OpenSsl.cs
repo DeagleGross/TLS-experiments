@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace NetworkSslConsole.Interop;
+namespace BioSslDedicatedThreadPool.Interop;
 
 /// <summary>
 /// OpenSSL interop definitions for direct SSL/TLS operations.
@@ -17,7 +17,6 @@ internal static unsafe class OpenSsl
 
     // SSL_do_handshake return codes
     public const int SSL_ERROR_NONE = 0;
-    public const int SSL_ERROR_ZERO_RETURN = 6;
     public const int SSL_ERROR_WANT_READ = 2;
     public const int SSL_ERROR_WANT_WRITE = 3;
     public const int SSL_ERROR_SYSCALL = 5;

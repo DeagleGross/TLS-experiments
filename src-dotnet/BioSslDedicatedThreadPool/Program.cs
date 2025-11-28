@@ -1,10 +1,10 @@
-﻿using NetworkSslConsole.Ssl;
+﻿using BioSslDedicatedThreadPool.Ssl;
 using System.Buffers;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 
-namespace NetworkSslConsole;
+namespace BioSslDedicatedThreadPool;
 
 class Program
 {
@@ -13,16 +13,17 @@ class Program
     private static int _errorCount = 0;
     private static int _handshakeAttemptsTotal = 0;
     private static int _handshakeOneShot = 0;  // Completed in first SSL_do_handshake
+    private static int _needsMoreDataCounter = 0;  // How many times ssl_do_handshake did ask for more data to write to input BIO
     private static int _handshakeMultiRound = 0; // Required multiple rounds
     private static SslContext? _sslContext;
 
     static async Task Main(string[] args)
     {
-        const int port = 5003;
+        const int port = 5004;
 
-        Console.WriteLine("=== Direct FD Async SSL Server (nginx-style) ===");
-        Console.WriteLine("Using SSL_set_fd + async I/O (epoll/IOCP)");
-        Console.WriteLine("No BIOs, no thread blocking - truly async like nginx!");
+        Console.WriteLine("=== BIO-Based Async SSL Server (Like SslStream) ===");
+        Console.WriteLine("Using memory BIOs + async I/O (epoll/IOCP)");
+        Console.WriteLine("No thread blocking - truly async!");
         Console.WriteLine();
 
         // Find certificate paths
@@ -74,7 +75,7 @@ class Program
     private static async Task HandleConnectionAsync(TcpClient tcpClient)
     {
         Socket? socket = null;
-        DirectSslConnection? sslConn = null;
+        BioSslConnection? sslConn = null;
 
         try
         {
@@ -82,14 +83,14 @@ class Program
             socket = tcpClient.Client;
             socket.NoDelay = true;
 
-            // Create direct FD SSL connection (nginx-style!)
-            sslConn = new DirectSslConnection(_sslContext!, socket);
+            // Create BIO-based SSL connection (like SslStream does it!)
+            sslConn = new BioSslConnection(_sslContext!, socket);
 
             var sw = Stopwatch.StartNew();
 
-            // Perform ASYNC SSL handshake using direct socket FD (nginx-style)
-            // OpenSSL uses SSL_set_fd and reads/writes directly from/to socket
-            // When socket would block, we use async I/O to wait (like epoll/IOCP)
+            // Perform ASYNC SSL handshake using memory BIOs
+            // This is truly async - only network I/O uses epoll/IOCP
+            // SSL_do_handshake, BIO_read, BIO_write are all memory operations (fast!)
             bool success = await sslConn.DoHandshakeAsync();
 
             if (!success)
@@ -107,6 +108,8 @@ class Program
                 Interlocked.Increment(ref _handshakeOneShot);
             else
                 Interlocked.Increment(ref _handshakeMultiRound);
+
+            Interlocked.Add(ref _needsMoreDataCounter, sslConn.NeedsMoreDataCounter);
 
             // Read HTTP request (async!)
             byte[] buffer = ArrayPool<byte>.Shared.Rent(4096);
@@ -158,7 +161,7 @@ class Program
                             $"Connections: {currentConnections} ({connectionsPerSec}/s) | " +
                             $"Handshakes: {currentHandshakes} ({handshakesPerSec}/s) | " +
                             $"Errors: {_errorCount}");
-            Console.WriteLine($"  Handshake stats: One-shot={_handshakeOneShot}, Multi-round={_handshakeMultiRound}, Avg attempts={avgAttempts:F2}");
+            Console.WriteLine($"  Handshake stats: One-shot={_handshakeOneShot}, Multi-round={_handshakeMultiRound} (needs more input BIO writes={_needsMoreDataCounter}), Avg attempts={avgAttempts:F2}");
 
             lastHandshakes = currentHandshakes;
             lastConnections = currentConnections;

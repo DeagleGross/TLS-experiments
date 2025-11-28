@@ -1,0 +1,41 @@
+# Dockerfile for TLS Handshake Server (Async Multi-Threaded)
+# Build stage
+FROM ubuntu:22.04 AS build
+
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+
+# Copy source file
+COPY tls_handshake_server_async_mt.c .
+
+# Compile the server
+RUN gcc -O3 -o tls_handshake_server_async_mt tls_handshake_server_async_mt.c \
+    -lssl -lcrypto -lpthread
+
+# Runtime stage
+FROM ubuntu:22.04 AS runtime
+
+RUN apt-get update && apt-get install -y \
+    libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy compiled binary
+COPY --from=build /src/tls_handshake_server_async_mt .
+
+# Default cert paths (mount your certs or override with args)
+# The container expects certs to be mounted at /app/certs/
+# e.g., docker run -v ./certs:/app/certs ...
+
+# Expose default port
+EXPOSE 6001
+
+# Run the server
+# Usage: docker run -v ./certs:/app/certs -p 6001:6001 <image> [port] [cert] [key]
+ENTRYPOINT ["./tls_handshake_server_async_mt"]
+CMD ["6001", "certs/server-p384.crt", "certs/server-p384.key"]

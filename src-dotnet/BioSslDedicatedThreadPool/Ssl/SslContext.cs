@@ -1,6 +1,6 @@
-using NetworkSslConsole.Interop;
+using BioSslDedicatedThreadPool.Interop;
 
-namespace NetworkSslConsole.Ssl;
+namespace BioSslDedicatedThreadPool.Ssl;
 
 /// <summary>
 /// Wrapper around OpenSSL SSL_CTX.

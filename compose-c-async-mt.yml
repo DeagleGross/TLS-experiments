@@ -1,0 +1,16 @@
+# Docker Compose for TLS Handshake Server (Async Multi-Threaded C Implementation)
+# Run with: docker compose -f compose-ssl-async-mt.yml up --build
+
+services:
+  tls-server-async-mt:
+    build:
+      context: ./src
+      dockerfile: Dockerfile_async_mt
+    container_name: c-tls-handshake-async-mt
+    ports:
+      - "6001:6001"
+    volumes:
+      - ./certs:/app/certs:ro
+    # Override command if needed:
+    # command: ["6001", "certs/server-p384.crt", "certs/server-p384.key"]
+    restart: unless-stopped

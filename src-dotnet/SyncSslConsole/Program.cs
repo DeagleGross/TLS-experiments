@@ -87,6 +87,7 @@ class Program
 
             // Perform SSL handshake (blocking for now)
             bool handshakeComplete = false;
+
             while (!handshakeComplete)
             {
                 handshakeComplete = sslConn.DoHandshake();

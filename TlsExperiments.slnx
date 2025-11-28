@@ -8,5 +8,6 @@
   <Project Path="D:/code/TLS-experiments/src-dotnet/BioSslConsole/BioSslConsole.csproj" />
   <Project Path="D:/code/TLS-experiments/src-dotnet/SslStreamConsole/SslStreamConsole.csproj" />
   <Project Path="D:/code/TLS-experiments/src-dotnet/SyncSslConsole/SyncSslConsole.csproj" />
-  <Project Path="D:/code/TLS-experiments/src-dotnet/NetworkSslConsole/NetworkSslConsole.csproj" />
+  <Project Path="src-dotnet/BioSslDedicatedThreadPool/BioSslDedicatedThreadPool.csproj" Id="288c8e7c-e241-4107-b1f2-838660ed2143" />
+  <Project Path="src-dotnet/PureUnmanagedSockets/PureUnmanagedSockets.csproj" Id="4873ff49-a020-45ad-9852-5734979e93db" />
 </Solution>

@@ -29,6 +29,8 @@ typedef struct {
     int fd;
     SSL *ssl;
     int handshake_complete;
+    int ssl_do_handshake_calls;  // Track SSL_do_handshake calls per request
+    int epoll_ctl_calls;         // Track epoll_ctl calls per request
 } client_context_t;
 
 typedef struct {
@@ -37,6 +39,9 @@ typedef struct {
     SSL_CTX *ssl_ctx;
     unsigned long handshakes_completed;
     unsigned long handshakes_failed;
+    unsigned long total_ssl_do_handshake_calls;  // Total SSL_do_handshake calls
+    unsigned long total_epoll_ctl_calls;         // Total epoll_ctl calls (excluding listen fd)
+    unsigned long total_accepts;                 // Total accepted connections
 } worker_context_t;
 
 static volatile int running = 1;
@@ -80,6 +85,8 @@ SSL_CTX* create_ssl_context() {
 
 int handle_tls_handshake(client_context_t *client, worker_context_t *worker) {
     int ret = SSL_do_handshake(client->ssl);
+    client->ssl_do_handshake_calls++;
+    worker->total_ssl_do_handshake_calls++;
     
     if (ret == 1) {
         // Handshake complete
@@ -103,6 +110,8 @@ int handle_tls_handshake(client_context_t *client, worker_context_t *worker) {
         ev.events |= EPOLLET;
         
         epoll_ctl(worker->epoll_fd, EPOLL_CTL_MOD, client->fd, &ev);
+        client->epoll_ctl_calls++;
+        worker->total_epoll_ctl_calls++;
         return 0; // Continue
     }
     
@@ -160,12 +169,18 @@ void* worker_thread(void *arg) {
                     ctx->fd = client_fd;
                     ctx->ssl = ssl;
                     ctx->handshake_complete = 0;
+                    ctx->ssl_do_handshake_calls = 0;
+                    ctx->epoll_ctl_calls = 0;
+                    
+                    worker->total_accepts++;
                     
                     // Add to this worker's epoll
                     struct epoll_event client_ev;
                     client_ev.events = EPOLLIN | EPOLLET;
                     client_ev.data.ptr = ctx;
                     epoll_ctl(worker->epoll_fd, EPOLL_CTL_ADD, client_fd, &client_ev);
+                    ctx->epoll_ctl_calls++;
+                    worker->total_epoll_ctl_calls++;
                 }
             } else {
                 // Handle client I/O
@@ -174,6 +189,8 @@ void* worker_thread(void *arg) {
                 int result = handle_tls_handshake(ctx, worker);
                 if (result != 0) {
                     epoll_ctl(worker->epoll_fd, EPOLL_CTL_DEL, ctx->fd, NULL);
+                    ctx->epoll_ctl_calls++;
+                    worker->total_epoll_ctl_calls++;
                     if (ctx->ssl) {
                         SSL_shutdown(ctx->ssl);
                         SSL_free(ctx->ssl);
@@ -194,7 +211,11 @@ void* worker_thread(void *arg) {
 }
 
 int main(int argc, char *argv[]) {
-    int port = 8443;
+    // Disable stdout buffering for Docker compatibility
+    setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
+    
+    int port = 6001;
     const char *cert_file = "certs/server-p384.crt";
     const char *key_file = "certs/server-p384.key";
     
@@ -276,6 +297,9 @@ int main(int argc, char *argv[]) {
         worker_contexts[i].ssl_ctx = ssl_ctx;
         worker_contexts[i].handshakes_completed = 0;
         worker_contexts[i].handshakes_failed = 0;
+        worker_contexts[i].total_ssl_do_handshake_calls = 0;
+        worker_contexts[i].total_epoll_ctl_calls = 0;
+        worker_contexts[i].total_accepts = 0;
         
         // Each worker gets its own epoll instance
         worker_contexts[i].epoll_fd = epoll_create1(0);
@@ -315,14 +339,22 @@ int main(int argc, char *argv[]) {
         
         unsigned long total_completed = 0;
         unsigned long total_failed = 0;
+        unsigned long total_ssl_do_handshake = 0;
+        unsigned long total_epoll_ctl = 0;
+        unsigned long total_accepts = 0;
         
         for (int i = 0; i < NUM_WORKERS; i++) {
             total_completed += worker_contexts[i].handshakes_completed;
             total_failed += worker_contexts[i].handshakes_failed;
+            total_ssl_do_handshake += worker_contexts[i].total_ssl_do_handshake_calls;
+            total_epoll_ctl += worker_contexts[i].total_epoll_ctl_calls;
+            total_accepts += worker_contexts[i].total_accepts;
         }
         
-        printf("[%ld] Total handshakes: %lu completed, %lu failed, Rate: %.2f/sec\n",
-               time(NULL), total_completed, total_failed, total_completed / elapsed);
+        printf("[%ld] Handshakes: %lu ok, %lu fail (%.2f/sec) | SSL_do_handshake: %lu (%.2f/req) | epoll_ctl: %lu (%.2f/req)\n",
+               time(NULL), total_completed, total_failed, total_completed / elapsed,
+               total_ssl_do_handshake, total_accepts > 0 ? (double)total_ssl_do_handshake / total_accepts : 0,
+               total_epoll_ctl, total_accepts > 0 ? (double)total_epoll_ctl / total_accepts : 0);
     }
     
     // Wait for workers to finish
@@ -339,10 +371,16 @@ int main(int argc, char *argv[]) {
     
     unsigned long total_completed = 0;
     unsigned long total_failed = 0;
+    unsigned long total_ssl_do_handshake_calls = 0;
+    unsigned long total_epoll_ctl_calls = 0;
+    unsigned long total_accepts = 0;
     
     for (int i = 0; i < NUM_WORKERS; i++) {
         total_completed += worker_contexts[i].handshakes_completed;
         total_failed += worker_contexts[i].handshakes_failed;
+        total_ssl_do_handshake_calls += worker_contexts[i].total_ssl_do_handshake_calls;
+        total_epoll_ctl_calls += worker_contexts[i].total_epoll_ctl_calls;
+        total_accepts += worker_contexts[i].total_accepts;
     }
     
     printf("\n=== MULTI-THREADED ASYNC TLS Performance Stats ===\n");
@@ -351,6 +389,24 @@ int main(int argc, char *argv[]) {
     printf("Completed handshakes: %lu\n", total_completed);
     printf("Failed handshakes: %lu\n", total_failed);
     printf("Handshakes/sec: %.2f\n", total_completed / elapsed);
+    printf("\n--- Per-Request Statistics ---\n");
+    printf("Total accepts: %lu\n", total_accepts);
+    printf("Total SSL_do_handshake calls: %lu\n", total_ssl_do_handshake_calls);
+    printf("Total epoll_ctl calls: %lu\n", total_epoll_ctl_calls);
+    if (total_accepts > 0) {
+        printf("Avg SSL_do_handshake per request: %.2f\n", (double)total_ssl_do_handshake_calls / total_accepts);
+        printf("Avg epoll_ctl per request: %.2f\n", (double)total_epoll_ctl_calls / total_accepts);
+    }
+    printf("\n--- Per-Worker Statistics ---\n");
+    for (int i = 0; i < NUM_WORKERS; i++) {
+        printf("Worker %d: accepts=%lu, SSL_do_handshake=%lu (avg=%.2f), epoll_ctl=%lu (avg=%.2f)\n",
+               i,
+               worker_contexts[i].total_accepts,
+               worker_contexts[i].total_ssl_do_handshake_calls,
+               worker_contexts[i].total_accepts > 0 ? (double)worker_contexts[i].total_ssl_do_handshake_calls / worker_contexts[i].total_accepts : 0,
+               worker_contexts[i].total_epoll_ctl_calls,
+               worker_contexts[i].total_accepts > 0 ? (double)worker_contexts[i].total_epoll_ctl_calls / worker_contexts[i].total_accepts : 0);
+    }
     printf("===================================================\n");
     
     close(listen_fd);
