@@ -1,0 +1,14 @@
+# Docker Compose for Direct fd-based SSL Server (No BIOs)
+# Compare performance with BIO-based implementations
+
+services:
+  direct-fd-ssl:
+    build:
+      context: ./src-dotnet/DirectFdSsl
+      dockerfile: Dockerfile
+    container_name: csharp-direct-fd-ssl
+    ports:
+      - "6002:6002"
+    volumes:
+      - ./certs:/app/certs:ro
+    restart: unless-stopped

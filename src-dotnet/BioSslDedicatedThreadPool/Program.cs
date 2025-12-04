@@ -8,22 +8,24 @@ namespace BioSslDedicatedThreadPool;
 
 class Program
 {
-    private static int _handshakeCount = 0;
     private static int _connectionCount = 0;
-    private static int _errorCount = 0;
-    private static int _handshakeAttemptsTotal = 0;
-    private static int _handshakeOneShot = 0;  // Completed in first SSL_do_handshake
-    private static int _needsMoreDataCounter = 0;  // How many times ssl_do_handshake did ask for more data to write to input BIO
-    private static int _handshakeMultiRound = 0; // Required multiple rounds
+    private static int _requestsProcessed = 0;
     private static SslContext? _sslContext;
+    private static HandshakeThreadPool? _handshakeThreadPool;
 
     static async Task Main(string[] args)
     {
         const int port = 5004;
+        
+        // Configurable handshake worker count (default: 4, like C async server)
+        int handshakeWorkers = args.Length > 0 && int.TryParse(args[0], out var workers) && workers > 0 
+            ? workers 
+            : 8;
 
-        Console.WriteLine("=== BIO-Based Async SSL Server (Like SslStream) ===");
-        Console.WriteLine("Using memory BIOs + async I/O (epoll/IOCP)");
-        Console.WriteLine("No thread blocking - truly async!");
+        Console.WriteLine("=== BIO-Based SSL Server with Dedicated Handshake Thread Pool ===");
+        Console.WriteLine($"Handshake Workers: {handshakeWorkers} (like C async server)");
+        Console.WriteLine("Each worker does ONE handshake iteration, then moves to next connection");
+        Console.WriteLine("Gradient approach: fair scheduling across concurrent handshakes");
         Console.WriteLine();
 
         // Find certificate paths
@@ -37,6 +39,10 @@ class Program
         // Create SSL context (shared across all connections)
         _sslContext = new SslContext(certPath, keyPath);
         Console.WriteLine($"Certificate loaded from: {certPath}");
+        Console.WriteLine();
+
+        // Create dedicated handshake thread pool
+        _handshakeThreadPool = new HandshakeThreadPool(handshakeWorkers);
         Console.WriteLine();
 
         // Start metrics reporting
@@ -68,6 +74,7 @@ class Program
         finally
         {
             listener.Stop();
+            _handshakeThreadPool?.Dispose();
             _sslContext?.Dispose();
         }
     }
@@ -83,34 +90,24 @@ class Program
             socket = tcpClient.Client;
             socket.NoDelay = true;
 
-            // Create BIO-based SSL connection (like SslStream does it!)
+            // Create BIO-based SSL connection
             sslConn = new BioSslConnection(_sslContext!, socket);
 
             var sw = Stopwatch.StartNew();
 
-            // Perform ASYNC SSL handshake using memory BIOs
-            // This is truly async - only network I/O uses epoll/IOCP
-            // SSL_do_handshake, BIO_read, BIO_write are all memory operations (fast!)
-            bool success = await sslConn.DoHandshakeAsync();
+            // **KEY DIFFERENCE**: Queue handshake to dedicated thread pool
+            // Workers process ONE iteration at a time (gradient approach)
+            // This allows fair scheduling when multiple handshakes are in progress
+            bool success = await _handshakeThreadPool!.QueueHandshakeAsync(sslConn, socket);
+
+            sw.Stop();
 
             if (!success)
             {
-                Interlocked.Increment(ref _errorCount);
                 return;
             }
 
-            sw.Stop();
-            Interlocked.Increment(ref _handshakeCount);
-
-            // Record handshake statistics
-            Interlocked.Add(ref _handshakeAttemptsTotal, sslConn.HandshakeAttempts);
-            if (sslConn.CompletedOneShot)
-                Interlocked.Increment(ref _handshakeOneShot);
-            else
-                Interlocked.Increment(ref _handshakeMultiRound);
-
-            Interlocked.Add(ref _needsMoreDataCounter, sslConn.NeedsMoreDataCounter);
-
+            // Handshake complete! Now we can process HTTP on regular ThreadPool
             // Read HTTP request (async!)
             byte[] buffer = ArrayPool<byte>.Shared.Rent(4096);
             try
@@ -119,6 +116,8 @@ class Program
 
                 if (bytesRead > 0)
                 {
+                    Interlocked.Increment(ref _requestsProcessed);
+
                     // Send minimal HTTP response (async!)
                     var response = "HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello, World!"u8.ToArray();
                     await sslConn.WriteAsync(response, 0, response.Length);
@@ -131,7 +130,6 @@ class Program
         }
         catch (Exception ex)
         {
-            Interlocked.Increment(ref _errorCount);
             Console.WriteLine($"Connection error: {ex.Message}");
         }
         finally
@@ -144,27 +142,29 @@ class Program
 
     private static async Task ReportMetrics()
     {
-        var lastHandshakes = 0;
         var lastConnections = 0;
+        var lastRequests = 0;
 
         while (true)
         {
             await Task.Delay(1000);
 
-            var currentHandshakes = _handshakeCount;
             var currentConnections = _connectionCount;
-            var handshakesPerSec = currentHandshakes - lastHandshakes;
+            var currentRequests = _requestsProcessed;
             var connectionsPerSec = currentConnections - lastConnections;
+            var requestsPerSec = currentRequests - lastRequests;
 
-            var avgAttempts = currentHandshakes > 0 ? (double)_handshakeAttemptsTotal / currentHandshakes : 0;
+            // Get handshake thread pool statistics
+            var stats = _handshakeThreadPool!.GetStatistics();
+
             Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] " +
                             $"Connections: {currentConnections} ({connectionsPerSec}/s) | " +
-                            $"Handshakes: {currentHandshakes} ({handshakesPerSec}/s) | " +
-                            $"Errors: {_errorCount}");
-            Console.WriteLine($"  Handshake stats: One-shot={_handshakeOneShot}, Multi-round={_handshakeMultiRound} (needs more input BIO writes={_needsMoreDataCounter}), Avg attempts={avgAttempts:F2}");
+                            $"Requests: {currentRequests} ({requestsPerSec}/s)");
+            Console.WriteLine($"  Handshakes: Total={stats.Total}, Success={stats.Success}, Failed={stats.Failed}, " +
+                            $"AvgAttempts={stats.AvgAttempts:F2}, Queued={stats.Queued}, CurrentQueueSize={stats.QueueSize}");
 
-            lastHandshakes = currentHandshakes;
             lastConnections = currentConnections;
+            lastRequests = currentRequests;
         }
     }
 

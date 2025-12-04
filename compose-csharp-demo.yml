@@ -1,0 +1,16 @@
+# Docker Compose for TLS Handshake Server (Async Multi-Threaded C Implementation)
+# Run with: docker compose -f compose-ssl-async-mt.yml up --build
+
+services:
+  tls-server-demo-semiunmanaged-socket:
+    build:
+      context: ./src-dotnet/DemoSemiUnmanagedSocket
+      dockerfile: Dockerfile
+    container_name: csharp-tls-server-demo-semiunmanaged-socket
+    ports:
+      - "5007:5007"
+    volumes:
+      - ./certs:/app/certs:ro
+    # Override command if needed:
+    # command: ["5007", "certs/server-p384.crt", "certs/server-p384.key"]
+    restart: unless-stopped

@@ -189,7 +189,7 @@ internal sealed class BioSslConnection : IDisposable
                 
                 if (read > 0)
                 {
-                    // Send to network - ASYNC, DOES NOT BLOCK THREAD!
+                    // Send to network
                     await _socket.SendAsync(new Memory<byte>(buffer, 0, read), SocketFlags.None);
                 }
             }

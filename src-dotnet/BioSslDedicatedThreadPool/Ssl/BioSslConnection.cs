@@ -62,63 +62,83 @@ internal sealed class BioSslConnection : IDisposable
     }
 
     /// <summary>
-    /// Performs async SSL handshake using the BIO-based approach (like SslStream).
-    /// This is truly async - only actual network I/O blocks (via epoll/IOCP).
+    /// Performs ONE iteration of SSL handshake SYNCHRONOUSLY (for dedicated worker thread).
+    /// Returns data to send and whether receive is needed.
+    /// This method ONLY does OpenSSL operations - no socket I/O!
     /// </summary>
-    public async Task<bool> DoHandshakeAsync()
+    public HandshakeState DoHandshakeStepSync(out byte[]? dataToSend, out bool needsReceive)
     {
-        // Set socket to non-blocking
-        _socket.Blocking = false;
+        dataToSend = null;
+        needsReceive = false;
 
-        int attemptCount = 0;
+        // 1. Try SSL handshake (works on memory BIOs - FAST!)
+        int ret = OpenSsl.SSL_do_handshake(_ssl);
+        HandshakeAttempts++;
 
-        while (true)
+        // 2. Check if there's data to send (BIO_ctrl_pending + BIO_read)
+        int pending = OpenSsl.BIO_ctrl_pending(_writeBio);
+        if (pending > 0)
         {
-            // 1. Try SSL handshake (works on memory BIOs - FAST!)
-            int ret = OpenSsl.SSL_do_handshake(_ssl);
-            attemptCount++;
-
-            if (ret == 1)
+            dataToSend = new byte[pending];
+            unsafe
             {
-                // Handshake complete!
-                _handshakeComplete = true;
-
-                // Record statistics
-                HandshakeAttempts = attemptCount;
-                CompletedOneShot = (attemptCount == 1);
-
-                // Flush any pending output
-                await FlushOutputBioAsync();
-                return true;
+                fixed (byte* ptr = dataToSend)
+                {
+                    int read = OpenSsl.BIO_read(_writeBio, ptr, pending);
+                    if (read != pending)
+                    {
+                        Array.Resize(ref dataToSend, read);
+                    }
+                }
             }
+        }
 
-            // Check what SSL needs
-            int error = OpenSsl.SSL_get_error(_ssl, ret);
+        if (ret == 1)
+        {
+            // Handshake complete!
+            _handshakeComplete = true;
+            CompletedOneShot = (HandshakeAttempts == 1);
+            return HandshakeState.Complete;
+        }
 
-            switch (error)
+        // Check what SSL needs
+        int error = OpenSsl.SSL_get_error(_ssl, ret);
+
+        switch (error)
+        {
+            case OpenSsl.SSL_ERROR_WANT_READ:
+                NeedsMoreDataCounter++;
+                needsReceive = true; // Need to receive data from socket
+                return HandshakeState.NeedsMoreData;
+
+            case OpenSsl.SSL_ERROR_WANT_WRITE:
+                // Data already in dataToSend, just need to send it
+                return HandshakeState.NeedsMoreData;
+
+            case OpenSsl.SSL_ERROR_SYSCALL:
+            case OpenSsl.SSL_ERROR_SSL:
+                return HandshakeState.Failed;
+
+            default:
+                return HandshakeState.Failed;
+        }
+    }
+
+    /// <summary>
+    /// Write received socket data into input BIO.
+    /// Called from ThreadPool thread after ReceiveAsync.
+    /// </summary>
+    public void WriteReceivedDataToBio(byte[] data, int length)
+    {
+        unsafe
+        {
+            fixed (byte* ptr = data)
             {
-                case OpenSsl.SSL_ERROR_WANT_READ:
-                    NeedsMoreDataCounter++;
-
-                    // OpenSSL needs more encrypted data from network
-                    // 1. First flush any pending output (handshake response)
-                    await FlushOutputBioAsync();
-                    
-                    // 2. Then read more data from network into input BIO
-                    await ReadFromNetworkIntoBioAsync();
-                    break;
-
-                case OpenSsl.SSL_ERROR_WANT_WRITE:
-                    // OpenSSL has data to send (rare during handshake)
-                    await FlushOutputBioAsync();
-                    break;
-
-                case OpenSsl.SSL_ERROR_SYSCALL:
-                case OpenSsl.SSL_ERROR_SSL:
-                    throw new InvalidOperationException($"SSL handshake failed: {OpenSsl.GetLastErrorString()}");
-
-                default:
-                    throw new InvalidOperationException($"Unknown SSL error: {error}");
+                int written = OpenSsl.BIO_write(_readBio, ptr, length);
+                if (written <= 0)
+                {
+                    throw new InvalidOperationException("Failed to write to input BIO");
+                }
             }
         }
     }

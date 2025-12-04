@@ -161,7 +161,7 @@ class Program
                             $"Connections: {currentConnections} ({connectionsPerSec}/s) | " +
                             $"Handshakes: {currentHandshakes} ({handshakesPerSec}/s) | " +
                             $"Errors: {_errorCount}");
-            Console.WriteLine($"  Handshake stats: One-shot={_handshakeOneShot}, Multi-round={_handshakeMultiRound} (needs more input BIO writes={_needsMoreDataCounter}), Avg attempts={avgAttempts:F2}");
+            Console.WriteLine($"  Handshake stats: One-shot={_handshakeOneShot}, Multi-round={_handshakeMultiRound} (needs more input BIO writes={_needsMoreDataCounter})");
 
             lastHandshakes = currentHandshakes;
             lastConnections = currentConnections;
