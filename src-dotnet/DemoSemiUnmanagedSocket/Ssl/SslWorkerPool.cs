@@ -137,7 +137,7 @@ internal sealed class SslWorkerPool : IDisposable
 /// A single SSL worker thread.
 /// 
 /// Runs a synchronous loop:
-/// 1. Check for new connection requests
+/// 1. Check for new connection requests from shared queue
 /// 2. Call epoll_wait to get ready sockets
 /// 3. Call ssl_do_handshake on ready sockets
 /// 4. Complete finished handshakes
@@ -148,18 +148,19 @@ internal sealed class SslWorker
     private readonly SslContext _sslContext;
     private readonly int _epollFd;
     private readonly Thread _thread;
-    private readonly ConcurrentQueue<HandshakeRequest> _newRequests = new();
-    private readonly Dictionary<int, HandshakeRequest> _activeConnections = new(); // fd -> request
+    private readonly ConcurrentQueue<HandshakeRequest> _sharedQueue; // Shared with other workers
+    private readonly Dictionary<int, HandshakeRequest> _activeConnections = new(); // fd -> request (local to this worker)
     private volatile bool _running;
 
     // Stats
     private long _completed;
     private long _failed;
 
-    public SslWorker(int workerId, SslContext sslContext)
+    public SslWorker(int workerId, SslContext sslContext, ConcurrentQueue<HandshakeRequest> sharedQueue)
     {
         _workerId = workerId;
         _sslContext = sslContext;
+        _sharedQueue = sharedQueue;
         
         // Create epoll instance for this worker
         _epollFd = NativeSsl.create_epoll();
@@ -188,11 +189,6 @@ internal sealed class SslWorker
         NativeSsl.close_epoll(_epollFd);
     }
 
-    public void Enqueue(HandshakeRequest request)
-    {
-        _newRequests.Enqueue(request);
-    }
-
     public (long completed, long failed, long pending) GetStats()
     {
         return (
@@ -211,7 +207,7 @@ internal sealed class SslWorker
 
         while (_running)
         {
-            // 1. Process new connection requests
+            // 1. Try to pick up new requests from shared queue
             ProcessNewRequests();
 
             // 2. If no active connections, just wait a bit and check again
@@ -247,11 +243,13 @@ internal sealed class SslWorker
     }
 
     /// <summary>
-    /// Process new handshake requests from the queue.
+    /// Process new handshake requests from the shared queue.
+    /// Each worker competes to dequeue - natural load balancing.
     /// </summary>
     private void ProcessNewRequests()
     {
-        while (_newRequests.TryDequeue(out var request))
+        // Try to grab one or more requests from shared queue
+        while (_sharedQueue.TryDequeue(out var request))
         {
             // Create SSL connection and register with our epoll
             IntPtr ssl = NativeSsl.ssl_connection_create(
@@ -267,6 +265,7 @@ internal sealed class SslWorker
             }
 
             request.Ssl = ssl;
+            request.WorkerId = _workerId; // Track which worker owns this
             _activeConnections[request.ClientFd] = request;
 
             // Try handshake immediately (might complete in one call for resumed sessions)
