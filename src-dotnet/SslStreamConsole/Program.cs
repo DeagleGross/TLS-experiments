@@ -32,7 +32,7 @@ class Program
 
         // Start server
         var listener = new TcpListener(IPAddress.Any, port);
-        listener.Start(backlog: 1024);
+        listener.Start(backlog: 512);
         
         Console.WriteLine($"Server listening on port {port}");
         Console.WriteLine("Press Ctrl+C to stop");
