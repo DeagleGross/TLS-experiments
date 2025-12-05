@@ -7,30 +7,30 @@ using System.Net.Sockets;
 namespace DemoSemiUnmanagedSocket;
 
 /// <summary>
-/// Async TLS Server Demo
+/// Async TLS Server with Dedicated Worker Pool
 /// 
 /// Architecture:
 /// - Socket accept: Managed (await socket.AcceptAsync())
-/// - TLS handshake: Native epoll + SSL_do_handshake
+/// - TLS handshake: Dedicated worker threads with epoll (SslWorkerPool)
 /// - Application data: Managed processing with native SSL_read/SSL_write
 /// 
-/// This replicates the async-mt C server pattern but with managed accept
-/// and application layer processing.
+/// The worker pool has N dedicated threads that:
+/// - Each run their own epoll loop
+/// - Handle ssl_do_handshake synchronously
+/// - Don't use async/await - pure blocking I/O on dedicated threads
 /// </summary>
 class Program
 {
-    // Statistics
-    private static long _handshakesCompleted;
-    private static long _handshakesFailed;
-    private static long _totalHandshakeIterations;
+    private const int WorkerCount = 4;
 
     static async Task Main(string[] args)
     {
-        Console.WriteLine("=== Async TLS Server (Managed Accept + Native SSL) ===");
+        Console.WriteLine("=== TLS Server with Dedicated Worker Pool ===");
         Console.WriteLine();
 
         // Parse arguments
         int port = args.Length > 0 ? int.Parse(args[0]) : 5007;
+        int workerCount = args.Length > 1 ? int.Parse(args[1]) : WorkerCount;
         
         // Find certificate paths
         var (certPath, keyPath) = FindCertificatePaths();
@@ -41,6 +41,7 @@ class Program
         }
 
         Console.WriteLine($"Port: {port}");
+        Console.WriteLine($"Workers: {workerCount}");
         Console.WriteLine($"Cert: {certPath}");
         Console.WriteLine($"Key: {keyPath}");
         Console.WriteLine();
@@ -49,10 +50,9 @@ class Program
         using var sslContext = new SslContext(certPath, keyPath);
         Console.WriteLine($"✓ SSL_CTX created: {sslContext.Handle}");
 
-        // ===== Create Epoll Instance =====
-        // In a multi-worker setup, each worker would have its own epoll
-        using var epollContext = new EpollContext();
-        Console.WriteLine($"✓ Epoll instance created: {epollContext.Handle}");
+        // ===== Create Worker Pool =====
+        using var workerPool = SslWorkerPool.GetInstance(sslContext, workerCount);
+        Console.WriteLine($"✓ Worker pool created with {workerCount} threads");
 
         // ===== Create Listening Socket =====
         var listenSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
@@ -76,15 +76,13 @@ class Program
         var stopwatch = Stopwatch.StartNew();
 
         // Start stats printer
-        _ = PrintStatsAsync(stopwatch, cts.Token);
+        _ = PrintStatsAsync(workerPool, stopwatch, cts.Token);
 
         // Accept loop
         try
         {
             while (!cts.Token.IsCancellationRequested)
             {
-                // Accept connection in MANAGED code
-                // This uses the .NET async infrastructure (completion ports on Windows, epoll on Linux)
                 Socket clientSocket;
                 try
                 {
@@ -95,9 +93,8 @@ class Program
                     break;
                 }
 
-                // Handle connection (fire and forget for now)
-                // In production, you'd want to limit concurrency
-                _ = Task.Run(() => HandleConnectionAsync(clientSocket, sslContext, epollContext, cts.Token));
+                // Submit to worker pool and handle response
+                _ = HandleConnectionAsync(clientSocket, workerPool, cts.Token);
             }
         }
         catch (OperationCanceledException)
@@ -107,56 +104,38 @@ class Program
 
         // Final stats
         stopwatch.Stop();
-        PrintFinalStats(stopwatch.Elapsed);
+        var (completed, failed, _) = workerPool.GetStats();
+        PrintFinalStats(completed, failed, stopwatch.Elapsed);
 
         listenSocket.Close();
     }
 
     /// <summary>
-    /// Handle a single client connection.
-    /// 
-    /// Flow:
-    /// 1. Create AsyncSslConnection (wraps native SSL object)
-    /// 2. Perform async handshake (uses epoll internally)
-    /// 3. Send HTTP response
-    /// 4. Cleanup
+    /// Handle a single client connection using the worker pool.
     /// </summary>
     private static async Task HandleConnectionAsync(
         Socket clientSocket, 
-        SslContext sslContext, 
-        EpollContext epollContext,
+        SslWorkerPool workerPool,
         CancellationToken ct)
     {
         try
         {
-            // Create SSL connection for this client
-            // This calls native ssl_connection_create() which:
-            // - Makes socket non-blocking
-            // - Creates SSL object
-            // - Associates with socket FD
-            using var sslConnection = new AsyncSslConnection(sslContext, clientSocket, epollContext.Handle);
+            // Submit handshake to worker pool
+            // This returns when handshake is complete (or failed)
+            var result = await workerPool.SubmitHandshakeAsync(clientSocket);
 
-            // Perform TLS handshake asynchronously
-            // This loops calling ssl_try_handshake() and epoll_wait_one()
-            // until handshake completes
-            await sslConnection.DoHandshakeAsync(ct);
-
-            // Handshake complete! Now we can send/receive application data
-            // Send a simple HTTP response
-            const string response = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-            sslConnection.WriteString(response);
-
-            // Update stats
-            Interlocked.Increment(ref _handshakesCompleted);
+            if (result == HandshakeResult.Success)
+            {
+                // Handshake complete! 
+                // For now, we just close - SSL handle is owned by worker
+                // TODO: Get SSL handle and do SSL_write here for response
+            }
         }
         catch (Exception ex)
         {
-            Interlocked.Increment(ref _handshakesFailed);
-            
-            // Only log if not a cancellation
             if (ex is not OperationCanceledException)
             {
-                Console.WriteLine($"[Error] {ex.Message}");
+                // Console.WriteLine($"[Error] {ex.Message}");
             }
         }
         finally
@@ -170,7 +149,7 @@ class Program
     /// <summary>
     /// Print stats periodically.
     /// </summary>
-    private static async Task PrintStatsAsync(Stopwatch stopwatch, CancellationToken ct)
+    private static async Task PrintStatsAsync(SslWorkerPool workerPool, Stopwatch stopwatch, CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
         {
@@ -184,25 +163,23 @@ class Program
             }
 
             var elapsed = stopwatch.Elapsed.TotalSeconds;
+            var (completed, failed, pending) = workerPool.GetStats();
 
-            var completed = _handshakesCompleted;
-            var failed = _handshakesFailed;
-
-            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Handshakes: {completed} ok, {failed} fail ({completed / elapsed:F2}/sec)");
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Handshakes: {completed} ok, {failed} fail, {pending} pending ({completed / elapsed:F2}/sec)");
         }
     }
 
     /// <summary>
     /// Print final statistics.
     /// </summary>
-    private static void PrintFinalStats(TimeSpan elapsed)
+    private static void PrintFinalStats(long completed, long failed, TimeSpan elapsed)
     {
         Console.WriteLine();
         Console.WriteLine("=== Final Statistics ===");
         Console.WriteLine($"Runtime: {elapsed.TotalSeconds:F2} seconds");
-        Console.WriteLine($"Completed handshakes: {_handshakesCompleted}");
-        Console.WriteLine($"Failed handshakes: {_handshakesFailed}");
-        Console.WriteLine($"Handshakes/sec: {_handshakesCompleted / elapsed.TotalSeconds:F2}");
+        Console.WriteLine($"Completed handshakes: {completed}");
+        Console.WriteLine($"Failed handshakes: {failed}");
+        Console.WriteLine($"Handshakes/sec: {completed / elapsed.TotalSeconds:F2}");
         Console.WriteLine("========================");
     }
 
