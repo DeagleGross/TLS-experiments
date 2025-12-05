@@ -333,11 +333,13 @@ internal sealed class SslWorker
     /// </summary>
     private static unsafe void SendHttpResponse(IntPtr ssl)
     {
-        // Simple HTTP response
-        ReadOnlySpan<byte> response = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"u8;
+        ReadOnlySpan<byte> response = "HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello, World!"u8;
         fixed (byte* ptr = response)
         {
-            NativeSsl.ssl_write(ssl, ptr, response.Length);
+            int written = NativeSsl.ssl_write(ssl, ptr, response.Length);
+            // Note: In production, should handle partial writes and errors
+            // written == -1 means WANT_WRITE (would block)
+            // written == -2 means error
         }
     }
 }
