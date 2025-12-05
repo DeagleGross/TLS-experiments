@@ -9,6 +9,7 @@ services:
     container_name: c-tls-handshake-async-mt
     ports:
       - "6001:6001"
+    cpuset: "0-3"
     volumes:
       - ./certs:/app/certs:ro
     # Override command if needed:

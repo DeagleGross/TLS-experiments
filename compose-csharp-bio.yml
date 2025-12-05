@@ -8,6 +8,7 @@ services:
       dockerfile: Dockerfile
     ports:
       - "5003:5003"
+    cpuset: "0-3"
     volumes:
       # Mount certs directory from repository root
       - ./certs:/app/certs:ro

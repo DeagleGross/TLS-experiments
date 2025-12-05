@@ -9,6 +9,7 @@ services:
     container_name: csharp-tls-server-demo-semiunmanaged-socket
     ports:
       - "5007:5007"
+    cpuset: "0-3"
     volumes:
       - ./certs:/app/certs:ro
     # Override command if needed:
