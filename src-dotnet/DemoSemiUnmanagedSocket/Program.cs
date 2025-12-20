@@ -1,5 +1,6 @@
 ﻿using DemoSemiUnmanagedSocket.Interop;
 using DemoSemiUnmanagedSocket.Ssl;
+using DemoSemiUnmanagedSocket.Ssl.Requests;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
