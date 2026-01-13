@@ -5,13 +5,11 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-	<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
     <None Include="../../certs/server-p384.crt" CopyToOutputDirectory="PreserveNewest" Link="certs/server-p384.crt" />
     <None Include="../../certs/server-p384.key" CopyToOutputDirectory="PreserveNewest" Link="certs/server-p384.key" />
-    <None Include="native/libdemo_native.so" CopyToOutputDirectory="PreserveNewest" Link="libdemo_native.so" />
   </ItemGroup>
 
 </Project>

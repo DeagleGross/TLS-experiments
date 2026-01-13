@@ -5,6 +5,9 @@
     <File Path="certs/server.crt" />
     <File Path="certs/server.key" />
   </Folder>
+  <Folder Name="/src-dotnet/">
+    <Project Path="src-dotnet/AsyncTlsSockets/AsyncTlsSockets.csproj" />
+  </Folder>
   <Project Path="D:/code/TLS-experiments/src-dotnet/BioSslConsole/BioSslConsole.csproj" />
   <Project Path="D:/code/TLS-experiments/src-dotnet/SslStreamConsole/SslStreamConsole.csproj" />
   <Project Path="D:/code/TLS-experiments/src-dotnet/SyncSslConsole/SyncSslConsole.csproj" />

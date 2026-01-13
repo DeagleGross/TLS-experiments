@@ -147,7 +147,7 @@ class Program
         }
     }
 
-    /// <summary>
+    /// <summary> 
     /// Print stats periodically.
     /// </summary>
     private static async Task PrintStatsAsync(SslWorkerPool workerPool, Stopwatch stopwatch, CancellationToken ct)
@@ -156,7 +156,7 @@ class Program
         {
             try
             {
-                await Task.Delay(5000, ct);
+                await Task.Delay(1000, ct);
             }
             catch (OperationCanceledException)
             {
