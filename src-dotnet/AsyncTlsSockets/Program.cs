@@ -35,6 +35,10 @@ Log.Information($"Cert: {certPath}");
 Log.Information($"Key: {keyPath}");
 Log.Information("------");
 
+AppDomain.CurrentDomain.UnhandledException += (s, e) => {
+    Console.WriteLine($"FATAL: {e.ExceptionObject}");
+};
+
 // Handle Ctrl+C
 var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (s, e) =>

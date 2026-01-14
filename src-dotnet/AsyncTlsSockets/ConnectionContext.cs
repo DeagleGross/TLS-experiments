@@ -44,6 +44,11 @@ public class ConnectionContext : IDisposable
 
     internal void OnSocketReady()
     {
+        if (_disposed == 1)
+        {
+            return;
+        }
+
         if (!HandshakeComplete)
         {
             Log.Debug("[ConnectionContext] Continuing handshake on FD {Fd}", _fd);
@@ -223,36 +228,41 @@ public class ConnectionContext : IDisposable
 
     public void Dispose()
     {
-        Log.Debug("[ConnectionContext] Disposing connection on FD {Fd}", _fd);
-
         // Interlocked ensures that even if the Worker and App Thread 
         // both try to close the connection, we only free memory once.
         if (Interlocked.Exchange(ref _disposed, 1) == 1)
             return;
 
-        // 0. Unregister from epoll so no more events arrive
-        var ev = new EpollEvent();
-        Libc.EpollCtl(_epollFd, (int)EpollOp.DEL, _fd, ref ev);
+        Log.Debug("[ConnectionContext] Disposing connection on FD {Fd}", _fd);
 
-        // 1. Clean up OpenSSL
-        if (_ssl != IntPtr.Zero)
+        // Unregister from Epoll FIRST 
+        // This stops other threads from getting events and trying to dispose
+        if (_epollFd > 0 && _fd > 0)
         {
-            // 1. Send the "close_notify" alert to the client
-            // This tells the OpenSSL CLI that the stream is officially over
-            NativeOpenSsl.SSL_shutdown(_ssl);
-
-            // This frees the SSL state machine memory
-            NativeOpenSsl.SSL_free(_ssl);
+            var ev = new EpollEvent();
+            Libc.EpollCtl(_epollFd, (int)EpollOp.DEL, _fd, ref ev);
         }
 
-        // 2. Close the Linux Socket
+        // Thread-safe SSL Free
+        if (_ssl != IntPtr.Zero)
+        {
+            // Copy the pointer and null the field IMMEDIATELY
+            IntPtr sslToFree = _ssl;
+            // We don't have a way to null a read-only field, 
+            // but the Interlocked check above protects this block.
+            
+            NativeOpenSsl.SSL_shutdown(sslToFree);
+            NativeOpenSsl.SSL_free(sslToFree);
+        }
+
+        // Close the Linux Socket
         if (_fd > 0)
         {
             // This closes the actual TCP connection
             Libc.close(_fd);
         }
 
-        // 3. Unpin from the Garbage Collector
+        // Unpin from the Garbage Collector
         if (_handle.IsAllocated)
         {
             // CRITICAL: Now the GC is allowed to move or collect this object.
