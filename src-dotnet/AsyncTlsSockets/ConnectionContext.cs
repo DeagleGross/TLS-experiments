@@ -8,7 +8,7 @@ public class ConnectionContext : IDisposable
 {
     private readonly int _epollFd;
     public readonly int _fd;
-    public readonly IntPtr _ssl;
+    public IntPtr _ssl;
     private GCHandle _handle;
     private int _disposed = 0; // To prevent double-disposal
     
@@ -240,14 +240,12 @@ public class ConnectionContext : IDisposable
             Libc.EpollCtl(_epollFd, (int)EpollOp.DEL, _fd, ref ev);
         }
 
-        // Thread-safe SSL Free
-        if (_ssl != IntPtr.Zero)
+        // Atomically swap the pointer to Zero so other threads fail their 'if (ssl == Zero)' checks
+        IntPtr sslToFree = Interlocked.Exchange(ref _ssl, IntPtr.Zero);
+        if (sslToFree != IntPtr.Zero)
         {
-            // Copy the pointer and null the field IMMEDIATELY
-            IntPtr sslToFree = _ssl;
-            // We don't have a way to null a read-only field, 
-            // but the Interlocked check above protects this block.
-            
+            // Now it is 100% safe to free, because no other thread can get a 
+            // reference to this address from this object anymore.
             NativeOpenSsl.SSL_shutdown(sslToFree);
             NativeOpenSsl.SSL_free(sslToFree);
         }
