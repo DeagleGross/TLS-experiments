@@ -1,13 +1,18 @@
-﻿using System.Diagnostics;
-using System.Net;
-using System.Net.Sockets;
+﻿using AsyncTlsSockets;
+using Serilog;
+using System.Diagnostics;
+
+Log.Logger = new LoggerConfiguration()
+    .MinimumLevel.Debug()
+    .WriteTo.Console()
+    .CreateLogger();
 
 // CONSTS
 const int WorkerCount = 4;
 const int PORT = 5008;
 
-Console.WriteLine("=== TLS Server with Async socket read \\ write ===");
-Console.WriteLine();
+Log.Information("=== TLS Server with workers ===");
+Log.Information("------");
 
 // Parse arguments
 int port = args.Length > 0 ? int.Parse(args[0]) : PORT;
@@ -17,20 +22,17 @@ int workerCount = args.Length > 1 ? int.Parse(args[1]) : WorkerCount;
 var (certPath, keyPath) = FindCertificatePaths();
 if (certPath == null || keyPath == null)
 {
-    Console.WriteLine("ERROR: No certificate files found!");
+    Log.Information("ERROR: No certificate files found!");
     return;
 }
 
-Console.WriteLine($"Port: {port}");
-Console.WriteLine($"Workers: {workerCount}");
-Console.WriteLine($"Cert: {certPath}");
-Console.WriteLine($"Key: {keyPath}");
-Console.WriteLine();
+var workerController = new WorkerController(port, certPath, keyPath, workerCount);
 
-Console.WriteLine($"✓ Listening on port {port}");
-Console.WriteLine();
-Console.WriteLine("Press Ctrl+C to stop...");
-Console.WriteLine();
+Log.Information($"Port: {port}");
+Log.Information($"Workers: {workerCount}");
+Log.Information($"Cert: {certPath}");
+Log.Information($"Key: {keyPath}");
+Log.Information("------");
 
 // Handle Ctrl+C
 var cts = new CancellationTokenSource();
@@ -44,6 +46,12 @@ var stopwatch = Stopwatch.StartNew();
 
 // Start stats printer
 _ = PrintStatsAsync(pool: null, stopwatch, cts.Token);
+
+Log.Information($"✓ Listening on port {port}");
+Log.Information("Press Ctrl+C to stop...");
+await Task.Delay(-1, cts.Token);
+
+Log.Information("Server stopped!");
 
 /// <summary> 
 /// Print stats periodically.
@@ -63,7 +71,7 @@ static async Task PrintStatsAsync(object pool, Stopwatch stopwatch, Cancellation
 
         var elapsed = stopwatch.Elapsed.TotalSeconds;
         // var (completed, failed, pending) = workerPool.GetStats();
-        // Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Handshakes: {completed} ok, {failed} fail, {pending} pending ({completed / elapsed:F2}/sec)");
+        // Log.Information($"[{DateTime.Now:HH:mm:ss}] Handshakes: {completed} ok, {failed} fail, {pending} pending ({completed / elapsed:F2}/sec)");
     }
 }
 
