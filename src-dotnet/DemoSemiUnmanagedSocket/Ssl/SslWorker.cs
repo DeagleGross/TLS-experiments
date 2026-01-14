@@ -1,4 +1,4 @@
-﻿using DemoSemiUnmanagedSocket.Interop;
+using DemoSemiUnmanagedSocket.Interop;
 using DemoSemiUnmanagedSocket.Ssl.Requests;
 using System;
 using System.Collections.Concurrent;
@@ -12,12 +12,15 @@ namespace DemoSemiUnmanagedSocket.Ssl;
 /// 
 /// Runs a synchronous loop:
 /// 1. Check for new connection requests from shared queue
-/// 2. Call epoll_wait to get ready sockets
+/// 2. Call epoll_wait to get ready sockets (batch mode for efficiency)
 /// 3. Call ssl_do_handshake on ready sockets
 /// 4. Complete finished handshakes
 /// </summary>
 internal sealed class SslWorker
 {
+    private const int MaxBatchEvents = 64;
+    private const int EpollTimeoutMs = 10; // Short timeout to check for new requests
+    
     private readonly int _workerId;
     private readonly SslContext _sslContext;
     private readonly int _epollFd;
@@ -74,29 +77,32 @@ internal sealed class SslWorker
 
     /// <summary>
     /// Main worker loop - runs synchronously on dedicated thread.
+    /// Uses batch epoll_wait for better throughput.
     /// </summary>
-    private void WorkerLoop()
+    private unsafe void WorkerLoop()
     {
         Console.WriteLine($"[Worker {_workerId}] Started, epoll_fd={_epollFd}");
+
+        // Stack-allocate buffer for batch epoll results
+        int* readyFds = stackalloc int[MaxBatchEvents];
 
         while (_running)
         {
             // 1. Try to pick up new requests from shared queue
             ProcessNewRequests();
 
-            // 2. If no active connections, just wait a bit and check again
-            if (_activeConnections.Count == 0)
-            {
-                Thread.Sleep(1); // Avoid busy spin
-                continue;
-            }
+            // 2. Determine timeout based on whether we have active connections
+            //    If no connections, use longer timeout to avoid busy spin
+            //    If we have connections, use short timeout to stay responsive to new requests
+            int timeout = _activeConnections.Count == 0 ? 100 : EpollTimeoutMs;
 
-            // 3. Wait for socket events (short timeout to check for new requests)
-            int readyFd = NativeSsl.epoll_wait_one(_epollFd, 10);
-            if (readyFd > 0)
+            // 3. Wait for socket events (batch mode - get multiple events per syscall)
+            int numReady = NativeSsl.epoll_wait_batch(_epollFd, timeout, readyFds, MaxBatchEvents);
+            
+            // 4. Process all ready sockets
+            for (int i = 0; i < numReady; i++)
             {
-                // 4. Handle the ready socket
-                ProcessReadySocket(readyFd);
+                ProcessReadySocket(readyFds[i]);
             }
         }
 

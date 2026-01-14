@@ -399,3 +399,51 @@ int ssl_write(SSL* ssl, const char* data, int length) {
 int ssl_get_fd(SSL* ssl) {
     return SSL_get_fd(ssl);
 }
+
+// ============================================================================
+// Batch Epoll Wait - for higher throughput
+// ============================================================================
+
+#define MAX_BATCH_EVENTS 64
+
+/**
+ * Wait for multiple I/O events on the epoll instance.
+ * 
+ * This is more efficient than epoll_wait_one() when handling many connections
+ * because it reduces the number of syscalls (one epoll_wait can return many events).
+ * 
+ * Parameters:
+ *   epoll_fd: The epoll instance
+ *   timeout_ms: Timeout in milliseconds (-1 for infinite)
+ *   fds_out: Array to receive ready file descriptors (must have space for max_events)
+ *   max_events: Maximum number of events to return
+ * 
+ * Returns:
+ *   >= 0: Number of ready file descriptors written to fds_out
+ *   -1: Error
+ */
+int epoll_wait_batch(int epoll_fd, int timeout_ms, int* fds_out, int max_events) {
+    struct epoll_event events[MAX_BATCH_EVENTS];
+    
+    // Clamp max_events to our static buffer size
+    if (max_events > MAX_BATCH_EVENTS) {
+        max_events = MAX_BATCH_EVENTS;
+    }
+    
+    int nfds = epoll_wait(epoll_fd, events, max_events, timeout_ms);
+    
+    if (nfds < 0) {
+        if (errno == EINTR) {
+            return 0;  // Interrupted, treat as timeout
+        }
+        perror("[native] epoll_wait_batch failed");
+        return -1;
+    }
+    
+    // Copy FDs to output array
+    for (int i = 0; i < nfds; i++) {
+        fds_out[i] = events[i].data.fd;
+    }
+    
+    return nfds;
+}
