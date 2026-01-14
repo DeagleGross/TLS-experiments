@@ -23,6 +23,8 @@
  *   6. C# uses ssl_read/ssl_write for application data
  */
 
+#define _GNU_SOURCE  // Required for accept4, SOCK_NONBLOCK
+
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <stdio.h>
@@ -446,4 +448,62 @@ int epoll_wait_batch(int epoll_fd, int timeout_ms, int* fds_out, int max_events)
     }
     
     return nfds;
+}
+
+// ============================================================================
+// Listen Socket Support - for nginx-style accept in worker threads
+// ============================================================================
+
+/**
+ * Add a listen socket to an epoll instance with EPOLLEXCLUSIVE.
+ * EPOLLEXCLUSIVE prevents thundering herd - only one worker wakes per connection.
+ * 
+ * Parameters:
+ *   epoll_fd: The worker's epoll instance
+ *   listen_fd: The listening socket file descriptor
+ * 
+ * Returns: 0 on success, -1 on error
+ */
+int epoll_add_listen_fd(int epoll_fd, int listen_fd) {
+    struct epoll_event ev;
+    ev.events = EPOLLIN | EPOLLEXCLUSIVE;  // Only wake one worker per event
+    ev.data.fd = listen_fd;
+    
+    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, listen_fd, &ev) < 0) {
+        perror("[native] epoll_ctl ADD listen_fd failed");
+        return -1;
+    }
+    return 0;
+}
+
+/**
+ * Accept a new connection from the listen socket.
+ * Sets the new socket to non-blocking and enables TCP_NODELAY.
+ * 
+ * Parameters:
+ *   listen_fd: The listening socket
+ * 
+ * Returns: 
+ *   >= 0: New client socket fd
+ *   -1: Would block (EAGAIN) - no pending connections
+ *   -2: Error
+ */
+int accept_nonblocking(int listen_fd) {
+    struct sockaddr_in client_addr;
+    socklen_t client_len = sizeof(client_addr);
+    
+    int client_fd = accept4(listen_fd, (struct sockaddr*)&client_addr, &client_len, SOCK_NONBLOCK);
+    
+    if (client_fd < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            return -1;  // No pending connections
+        }
+        perror("[native] accept4 failed");
+        return -2;
+    }
+    
+    // Set TCP_NODELAY for low latency
+    set_tcp_nodelay(client_fd);
+    
+    return client_fd;
 }

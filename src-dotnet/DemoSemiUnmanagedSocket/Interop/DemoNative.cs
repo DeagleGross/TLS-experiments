@@ -72,6 +72,25 @@ internal static class NativeSsl
     [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
     public static extern unsafe int epoll_wait_batch(int epoll_fd, int timeout_ms, int* fds_out, int max_events);
 
+    /// <summary>
+    /// Add a listen socket to an epoll instance with EPOLLEXCLUSIVE.
+    /// EPOLLEXCLUSIVE prevents thundering herd - only one worker wakes per connection.
+    /// </summary>
+    /// <param name="epoll_fd">The worker's epoll instance</param>
+    /// <param name="listen_fd">The listening socket file descriptor</param>
+    /// <returns>0 on success, -1 on error</returns>
+    [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int epoll_add_listen_fd(int epoll_fd, int listen_fd);
+
+    /// <summary>
+    /// Accept a new connection from the listen socket (non-blocking).
+    /// Sets the new socket to non-blocking and enables TCP_NODELAY.
+    /// </summary>
+    /// <param name="listen_fd">The listening socket</param>
+    /// <returns>>= 0: new client fd, -1: would block (no pending), -2: error</returns>
+    [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int accept_nonblocking(int listen_fd);
+
     // ========================================================================
     // Socket Utilities
     // ========================================================================

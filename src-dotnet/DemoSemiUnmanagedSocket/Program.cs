@@ -1,6 +1,5 @@
-﻿using DemoSemiUnmanagedSocket.Interop;
+using DemoSemiUnmanagedSocket.Interop;
 using DemoSemiUnmanagedSocket.Ssl;
-using DemoSemiUnmanagedSocket.Ssl.Requests;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
@@ -8,17 +7,15 @@ using System.Net.Sockets;
 namespace DemoSemiUnmanagedSocket;
 
 /// <summary>
-/// Async TLS Server with Dedicated Worker Pool
+/// Async TLS Server with Dedicated Worker Pool (nginx-style)
 /// 
 /// Architecture:
-/// - Socket accept: Managed (await socket.AcceptAsync())
-/// - TLS handshake: Dedicated worker threads with epoll (SslWorkerPool)
-/// - Application data: Managed processing with native SSL_read/SSL_write
+/// - Socket listen: Managed Socket bound to port
+/// - Accept + TLS handshake: Dedicated worker threads with epoll
+/// - Workers add listen socket to their epoll with EPOLLEXCLUSIVE
+/// - Workers accept connections directly in their epoll loop (no cross-thread handoff)
 /// 
-/// The worker pool has N dedicated threads that:
-/// - Each run their own epoll loop
-/// - Handle ssl_do_handshake synchronously
-/// - Don't use async/await - pure blocking I/O on dedicated threads
+/// This eliminates the accept overhead that caused the 18% gap in light load.
 /// </summary>
 class Program
 {
@@ -26,7 +23,7 @@ class Program
 
     static async Task Main(string[] args)
     {
-        Console.WriteLine("=== TLS Server with Dedicated Worker Pool ===");
+        Console.WriteLine("=== TLS Server with Dedicated Worker Pool (nginx-style) ===");
         Console.WriteLine();
 
         // Parse arguments
@@ -61,6 +58,9 @@ class Program
         listenSocket.Bind(new IPEndPoint(IPAddress.Any, port));
         listenSocket.Listen(512);
         
+        // Make listen socket non-blocking for epoll
+        SetNonBlocking(listenSocket);
+        
         Console.WriteLine($"✓ Listening on port {port}");
         Console.WriteLine();
         Console.WriteLine("Press Ctrl+C to stop...");
@@ -76,27 +76,17 @@ class Program
 
         var stopwatch = Stopwatch.StartNew();
 
+        // Start workers with the listen socket
+        // Workers will add listen_fd to their epoll and accept connections directly
+        workerPool.SetListenSocketAndStart(listenSocket);
+
         // Start stats printer
         _ = PrintStatsAsync(workerPool, stopwatch, cts.Token);
 
-        // Accept loop
+        // Wait for cancellation (workers do all the work)
         try
         {
-            while (!cts.Token.IsCancellationRequested)
-            {
-                Socket clientSocket;
-                try
-                {
-                    clientSocket = await listenSocket.AcceptAsync(cts.Token);
-                }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
-
-                // Submit to worker pool and handle response
-                _ = HandleConnectionAsync(clientSocket, workerPool, cts.Token);
-            }
+            await Task.Delay(Timeout.Infinite, cts.Token);
         }
         catch (OperationCanceledException)
         {
@@ -108,43 +98,16 @@ class Program
         var (completed, failed, _) = workerPool.GetStats();
         PrintFinalStats(completed, failed, stopwatch.Elapsed);
 
+        // Keep listen socket alive until we're done
         listenSocket.Close();
     }
 
     /// <summary>
-    /// Handle a single client connection using the worker pool.
+    /// Set the socket to non-blocking mode.
     /// </summary>
-    private static async Task HandleConnectionAsync(
-        Socket clientSocket, 
-        SslWorkerPool workerPool,
-        CancellationToken ct)
+    private static void SetNonBlocking(Socket socket)
     {
-        try
-        {
-            // Submit handshake to worker pool
-            // This returns when handshake is complete (or failed)
-            var result = await workerPool.SubmitHandshakeAsync(clientSocket);
-
-            if (result == HandshakeResult.Success)
-            {
-                // Handshake complete! 
-                // For now, we just close - SSL handle is owned by worker
-                // TODO: Get SSL handle and do SSL_write here for response
-            }
-        }
-        catch (Exception ex)
-        {
-            if (ex is not OperationCanceledException)
-            {
-                // Console.WriteLine($"[Error] {ex.Message}");
-            }
-        }
-        finally
-        {
-            // Close the managed socket
-            try { clientSocket.Shutdown(SocketShutdown.Both); } catch { }
-            clientSocket.Close();
-        }
+        socket.Blocking = false;
     }
 
     /// <summary> 
