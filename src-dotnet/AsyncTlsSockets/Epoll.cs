@@ -12,11 +12,12 @@ public enum EpollOp
 [Flags]
 public enum EpollEvents : uint
 {
-    EPOLLIN = 0x001,
-    EPOLLOUT = 0x004,
+    EPOLLIN = 0x001,      // Data available to read
+    EPOLLOUT = 0x004,     // Socket buffer ready for writing
     EPOLLERR = 0x008,
     EPOLLHUP = 0x010,
-    EPOLLET = 1u << 31 // Edge-Triggered
+    EPOLLRDHUP = 0x2000,  // Peer closed connection or shut down writing half
+    EPOLLET = 1u << 31    // Edge-Triggered mode
 }
 
 [StructLayout(LayoutKind.Explicit)]

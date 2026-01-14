@@ -1,6 +1,7 @@
 ﻿using Serilog;
 using System.Net;
 using System.Runtime.InteropServices;
+using System.Threading.Channels;
 
 namespace AsyncTlsSockets;
 
@@ -12,13 +13,16 @@ public unsafe class TlsWorker
     private readonly string _certPath;
     private readonly string _keyPath;
 
+    private readonly ChannelWriter<ConnectionContext> _acceptQueue;
+
     private IntPtr _sslCtx;
     private int _epollFd;
     private int _listenFd;
 
-    public TlsWorker(int id, int port, string cert, string key)
+    public TlsWorker(int id, int port, string cert, string key, ChannelWriter<ConnectionContext> acceptQueue)
     {
         _id = id;
+        _acceptQueue = acceptQueue;
 
         _port = port;
         _certPath = cert;
@@ -60,61 +64,7 @@ public unsafe class TlsWorker
                 {
                     Log.Debug("[TlsWorker {_id}] New connection ready to accept", _id);
 
-                    // 1. Accept the connection with Non-Blocking flag (0x800 is SOCK_NONBLOCK on Linux)
-                    // We pass null for addr/addrlen for maximum speed if you don't need the Client IP immediately
-                    int clientFd = Libc.accept4(_listenFd, IntPtr.Zero, IntPtr.Zero, 0x800);
-
-                    if (clientFd < 0)
-                    {
-                        int err = Marshal.GetLastWin32Error();
-                        if (err != (int)Libc.Errno.EAGAIN && err != (int)Libc.Errno.EWOULDBLOCK)
-                        {
-                            Log.Error("Accept failed with errno: {0}", err);
-                        }
-                        return;
-                    }
-
-                    // 2. Create the SSL object from our Worker's Context
-                    IntPtr ssl = NativeOpenSsl.SSL_new(_sslCtx);
-                    if (ssl == IntPtr.Zero)
-                    {
-                        Libc.close(clientFd);
-                        return;
-                    }
-
-                    // Link the Socket FD to the SSL object
-                    NativeOpenSsl.SSL_set_fd(ssl, clientFd);
-                    // Tell OpenSSL we are acting as the Server in the upcoming handshake
-                    NativeOpenSsl.SSL_set_accept_state(ssl);
-
-                    // 3. Create the ConnectionContext
-                    var context = new ConnectionContext(clientFd, ssl);
-
-                    // 4. Pin the object so the GC doesn't move it while its address is in Epoll
-                    GCHandle handle = GCHandle.Alloc(context);
-                    IntPtr contextPtr = GCHandle.ToIntPtr(handle);
-
-                    // 5. Register with Epoll
-                    // We watch for READ, Peer Shutdown (RDHUP), and use Edge-Triggered (ET) mode
-                    EpollEvent ev = new EpollEvent
-                    {
-                        events = (uint)(EpollEvents.EPOLLIN | EpollEvents.EPOLLET | EpollEvents.EPOLLRDHUP),
-                        data = new EpollData { ptr = contextPtr }
-                    };
-
-                    if (Libc.EpollCtl(_epollFd, (int)EpollOp.ADD, clientFd, ref ev) < 0)
-                    {
-                        Log.Error("Failed to add client to epoll");
-                        NativeOpenSsl.SSL_free(ssl);
-                        Libc.close(clientFd);
-                        handle.Free();
-                        return;
-                    }
-
-                    // 6. Start the Handshake
-                    // This will likely return WANT_READ immediately, 
-                    // but it kicks off the state machine.
-                    context.DoHandshake();
+                    HandleAccept();
                 }
                 else
                 {
@@ -124,6 +74,50 @@ public unsafe class TlsWorker
                     // and perform SSL_read / SSL_write
                 }
             }
+        }
+    }
+
+    private void HandleAccept()
+    {
+        int clientFd = Libc.accept4(_listenFd, IntPtr.Zero, IntPtr.Zero, 0x800); // SOCK_NONBLOCK
+        if (clientFd < 0) return;
+
+        IntPtr ssl = NativeOpenSsl.SSL_new(_sslCtx);
+        NativeOpenSsl.SSL_set_fd(ssl, clientFd);
+        NativeOpenSsl.SSL_set_accept_state(ssl);
+
+        // Create the context and tell it who its 'parent' queue is
+        var context = new ConnectionContext(clientFd, ssl, _acceptQueue);
+
+        // Pin for Epoll
+        GCHandle handle = GCHandle.Alloc(context);
+        context.SetHandle(handle);
+
+        // Register in Worker's local Epoll
+        RegisterInEpoll(clientFd, GCHandle.ToIntPtr(handle));
+
+        // Kick off the handshake
+        context.DoHandshake();
+    }
+
+    private void RegisterInEpoll(int clientFd, IntPtr contextPtr)
+    {
+        // We watch for:
+        // EPOLLIN: Data available to read
+        // EPOLLRDHUP: Peer closed connection (useful for clean shutdown)
+        // EPOLLET: Edge-Triggered mode (Performance)
+        var ev = new EpollEvent
+        {
+            events = (uint)(EpollEvents.EPOLLIN | EpollEvents.EPOLLET | EpollEvents.EPOLLRDHUP),
+            data = new EpollData { ptr = contextPtr }
+        };
+
+        if (Libc.EpollCtl(_epollFd, (int)EpollOp.ADD, clientFd, ref ev) < 0)
+        {
+            int error = Marshal.GetLastWin32Error();
+            // Log error and close connection if registration fails
+            Libc.close(clientFd);
+            throw new Exception($"Failed to add client FD {clientFd} to epoll. Error: {error}");
         }
     }
 
@@ -165,7 +159,7 @@ public unsafe class TlsWorker
 
         // 3. Set Non-Blocking (Required for Epoll)
         int flags = Libc.fcntl(fd, Libc.F_GETFL, 0);
-        Libc.fcntl(fd, Libc.F_SETFL, flags | Libc.O_NONBLOCK);
+        Libc.fcntl(fd, Libc.F_SETFL, flags | Libc.SOCK_NONBLOCK);
 
         // 4. Bind to the port (0.0.0.0:PORT)
         SockAddrIn addr = new SockAddrIn();

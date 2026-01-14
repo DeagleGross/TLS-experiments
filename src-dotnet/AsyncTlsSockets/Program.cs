@@ -1,6 +1,9 @@
 ﻿using AsyncTlsSockets;
 using Serilog;
+using System;
+using System.Buffers;
 using System.Diagnostics;
+using System.Net.Security;
 
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Debug()
@@ -26,8 +29,7 @@ if (certPath == null || keyPath == null)
     return;
 }
 
-var workerController = new WorkerController(port, certPath, keyPath, workerCount);
-workerController.StartWorkers();
+var controller = new WorkerController(port, certPath, keyPath, workerCount);
 
 Log.Information($"Port: {port}");
 Log.Information($"Workers: {workerCount}");
@@ -50,9 +52,47 @@ _ = PrintStatsAsync(pool: null, stopwatch, cts.Token);
 
 Log.Information($"✓ Listening on port {port}");
 Log.Information("Press Ctrl+C to stop...");
-await Task.Delay(-1, cts.Token);
+
+controller.StartWorkers();
+
+while (!cts.IsCancellationRequested)
+{
+    // Awaits until ANY worker finishes a TLS handshake
+    var connection = await controller.AcceptAsync(cts.Token);
+
+    // Process the request in a background task so we can Accept the next one immediately
+    _ = HandleConnection(connection, cts.Token);
+}
 
 Log.Information("Server stopped!");
+
+async Task HandleConnection(ConnectionContext connection, CancellationToken cancellationToken)
+{
+    byte[]? buffer = null;
+
+    // using (connection) // This calls Dispose() and unpins the GCHandle!
+    try
+    {
+        buffer = ArrayPool<byte>.Shared.Rent(4096);
+        var bytesRead = await connection.ReadAsync(buffer, cancellationToken);
+
+        if (bytesRead > 0)
+        {
+            // Send minimal HTTP response
+            var response = "HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello, World!"u8.ToArray();
+            await connection.WriteAsync(response, cancellationToken);
+        }
+
+        // ... Send HTTP Response ...
+    }
+    finally
+    {
+        if (buffer is not null)
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
+    }
+}
 
 /// <summary> 
 /// Print stats periodically.

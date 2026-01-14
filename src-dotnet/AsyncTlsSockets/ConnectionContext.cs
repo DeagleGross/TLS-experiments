@@ -1,21 +1,43 @@
-﻿namespace AsyncTlsSockets;
+﻿using Serilog;
+using System.Runtime.InteropServices;
+using System.Threading.Channels;
 
-public class ConnectionContext
+namespace AsyncTlsSockets;
+
+public class ConnectionContext : IDisposable
 {
-    public readonly int Fd;
-    public readonly IntPtr SslPtr;
+    public readonly int _fd;
+    public readonly IntPtr _ssl;
+    private GCHandle _handle;
+    private int _disposed = 0; // To prevent double-disposal
+
     private TaskCompletionSource<int>? _readTcs;
+    private TaskCompletionSource<int>? _writeTcs;
+
     private Memory<byte> _currentReadBuffer;
+
+    private readonly ChannelWriter<ConnectionContext> _acceptQueue;
 
     public bool HandshakeComplete { get; private set; }
 
-    public ConnectionContext(int fd, IntPtr sslPtr)
+    public ConnectionContext(int fd, IntPtr sslPtr, ChannelWriter<ConnectionContext> acceptQueue)
     {
-        Fd = fd;
-        SslPtr = sslPtr;
+        _fd = fd;
+        _ssl = sslPtr;
+
+        _acceptQueue = acceptQueue;
     }
 
-    // --- The Worker Thread calls these ---
+    /// <summary>
+    /// Stores the GCHandle created during HandleAccept.
+    /// This handle keeps the object pinned for Linux epoll.
+    /// </summary>
+    public void SetHandle(GCHandle handle)
+    {
+        _handle = handle;
+    }
+
+    #region TLS Worker Callbacks
 
     public void OnDataAvailable()
     {
@@ -40,37 +62,49 @@ public class ConnectionContext
 
     public void DoHandshake()
     {
-        int result = NativeOpenSsl.SSL_do_handshake(SslPtr);
-        if (result == 1)
+        int result = NativeOpenSsl.SSL_do_handshake(_ssl);
+
+        if (result == 1) // 1 means Handshake Success
         {
             HandshakeComplete = true;
-            // Notify application that connection is ready if needed
+
+            // This is the "Return" to the controller.
+            // It makes the 'await AcceptAsync()' in Program.cs continue.
+            if (!_acceptQueue.TryWrite(this))
+            {
+                // If the queue was closed/full (unlikely here)
+                Dispose();
+            }
         }
         else
         {
-            int error = NativeOpenSsl.SSL_get_error(SslPtr, result);
-            // If error is WANT_READ, we just return to the loop.
-            // Epoll will wake us up again when more data arrives.
+            int err = NativeOpenSsl.SSL_get_error(_ssl, result);
+            if (err == 2) // SSL_ERROR_WANT_READ
+            {
+                // Normal. Do nothing. Worker loop will call OnDataAvailable()
+                // which calls DoHandshake() again later.
+                return;
+            }
+            else
+            {
+                // Handshake failed (bad cert, protocol, etc.)
+                Dispose();
+            }
         }
     }
 
-    private unsafe int DecryptAndFillBuffer()
+    #endregion
+
+    #region App Logic API
+
+    public ValueTask<int> WriteAsync(Memory<byte> buffer, CancellationToken cancellationToken)
     {
-        using var pin = _currentReadBuffer.Pin();
-        int bytes = NativeOpenSsl.SSL_read(SslPtr, (IntPtr)pin.Pointer, _currentReadBuffer.Length);
+        if (_writeTcs != null) throw new InvalidOperationException("Write already in progress");
 
-        if (bytes <= 0)
-        {
-            int error = NativeOpenSsl.SSL_get_error(SslPtr, bytes);
-            // Handle close or WANT_READ
-            return 0;
-        }
-        return bytes;
+        return new ValueTask<int>(_readTcs.Task);
     }
 
-    // --- The Application Logic calls this ---
-
-    public ValueTask<int> ReadAsync(Memory<byte> buffer)
+    public ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken)
     {
         if (_readTcs != null) throw new InvalidOperationException("Read already in progress");
 
@@ -87,5 +121,58 @@ public class ConnectionContext
         }
 
         return new ValueTask<int>(_readTcs.Task);
+    }
+
+    #endregion
+
+    private unsafe int DecryptAndFillBuffer()
+    {
+        using var pin = _currentReadBuffer.Pin();
+        int bytes = NativeOpenSsl.SSL_read(_ssl, (IntPtr)pin.Pointer, _currentReadBuffer.Length);
+
+        if (bytes <= 0)
+        {
+            int error = NativeOpenSsl.SSL_get_error(_ssl, bytes);
+            // Handle close or WANT_READ
+            return 0;
+        }
+        return bytes;
+    }
+
+    public void Dispose()
+    {
+        Log.Debug("[ConnectionContext] Disposing connection on FD {Fd}", _fd);
+
+        // Interlocked ensures that even if the Worker and App Thread 
+        // both try to close the connection, we only free memory once.
+        if (Interlocked.Exchange(ref _disposed, 1) == 1)
+            return;
+
+        // 1. Clean up OpenSSL
+        if (_ssl != IntPtr.Zero)
+        {
+            // This frees the SSL state machine memory
+            NativeOpenSsl.SSL_free(_ssl);
+        }
+
+        // 2. Close the Linux Socket
+        if (_fd > 0)
+        {
+            // This closes the actual TCP connection
+            Libc.close(_fd);
+        }
+
+        // 3. Unpin from the Garbage Collector
+        if (_handle.IsAllocated)
+        {
+            // CRITICAL: Now the GC is allowed to move or collect this object.
+            // After this call, the pointer stored in epoll is INVALID.
+            _handle.Free();
+        }
+
+        // Optional: If you use a TaskCompletionSource for ReadAsync, 
+        // cancel it here so the app doesn't hang forever.
+        _readTcs?.TrySetCanceled();
+        _writeTcs?.TrySetCanceled();
     }
 }
