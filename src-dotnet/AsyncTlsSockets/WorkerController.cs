@@ -1,4 +1,6 @@
-﻿namespace AsyncTlsSockets;
+﻿using Serilog;
+
+namespace AsyncTlsSockets;
 
 internal class WorkerController
 {
@@ -20,7 +22,10 @@ internal class WorkerController
         for (int i = 0; i < _workerCount; i++)
         {
             var worker = new TlsWorker(i, _port, _certPath, _keyPath);
+
+            Log.Information("Starting worker {WorkerId} on port {Port}", i, _port);
             worker.Start();
+            Log.Information("Started worker {WorkerId} on port {Port}", i, _port);
         }
     }
 }

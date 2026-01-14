@@ -27,6 +27,7 @@ if (certPath == null || keyPath == null)
 }
 
 var workerController = new WorkerController(port, certPath, keyPath, workerCount);
+workerController.StartWorkers();
 
 Log.Information($"Port: {port}");
 Log.Information($"Workers: {workerCount}");
