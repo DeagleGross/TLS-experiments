@@ -27,20 +27,6 @@ Console.WriteLine($"Cert: {certPath}");
 Console.WriteLine($"Key: {keyPath}");
 Console.WriteLine();
 
-// ===== Create SSL Context (shared across all connections) =====
-using var sslContext = new SslContext(certPath, keyPath);
-Console.WriteLine($"✓ SSL_CTX created: {sslContext.Handle}");
-
-// ===== Create Worker Pool =====
-using var workerPool = SslWorkerPool.GetInstance(sslContext, workerCount);
-Console.WriteLine($"✓ Worker pool created with {workerCount} threads");
-
-// ===== Create Listening Socket =====
-var listenSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-listenSocket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-listenSocket.Bind(new IPEndPoint(IPAddress.Any, port));
-listenSocket.Listen(512);
-
 Console.WriteLine($"✓ Listening on port {port}");
 Console.WriteLine();
 Console.WriteLine("Press Ctrl+C to stop...");
@@ -57,12 +43,12 @@ Console.CancelKeyPress += (s, e) =>
 var stopwatch = Stopwatch.StartNew();
 
 // Start stats printer
-_ = PrintFinalStats(workerPool, stopwatch, cts.Token);
+_ = PrintStatsAsync(pool: null, stopwatch, cts.Token);
 
 /// <summary> 
 /// Print stats periodically.
 /// </summary>
-static async Task PrintStatsAsync(SslWorkerPool workerPool, Stopwatch stopwatch, CancellationToken ct)
+static async Task PrintStatsAsync(object pool, Stopwatch stopwatch, CancellationToken ct)
 {
     while (!ct.IsCancellationRequested)
     {
@@ -76,24 +62,9 @@ static async Task PrintStatsAsync(SslWorkerPool workerPool, Stopwatch stopwatch,
         }
 
         var elapsed = stopwatch.Elapsed.TotalSeconds;
-        var (completed, failed, pending) = workerPool.GetStats();
-
-        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Handshakes: {completed} ok, {failed} fail, {pending} pending ({completed / elapsed:F2}/sec)");
+        // var (completed, failed, pending) = workerPool.GetStats();
+        // Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Handshakes: {completed} ok, {failed} fail, {pending} pending ({completed / elapsed:F2}/sec)");
     }
-}
-
-/// <summary>
-/// Print final statistics.
-/// </summary>
-static void PrintFinalStats(long completed, long failed, TimeSpan elapsed)
-{
-    Console.WriteLine();
-    Console.WriteLine("=== Final Statistics ===");
-    Console.WriteLine($"Runtime: {elapsed.TotalSeconds:F2} seconds");
-    Console.WriteLine($"Completed handshakes: {completed}");
-    Console.WriteLine($"Failed handshakes: {failed}");
-    Console.WriteLine($"Handshakes/sec: {completed / elapsed.TotalSeconds:F2}");
-    Console.WriteLine("========================");
 }
 
 static (string? certPath, string? keyPath) FindCertificatePaths()

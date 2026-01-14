@@ -8,9 +8,6 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
-  <ItemGroup>
-    <None Include="../../certs/server-p384.crt" CopyToOutputDirectory="PreserveNewest" Link="certs/server-p384.crt" />
-    <None Include="../../certs/server-p384.key" CopyToOutputDirectory="PreserveNewest" Link="certs/server-p384.key" />
-  </ItemGroup>
+
 
 </Project>
