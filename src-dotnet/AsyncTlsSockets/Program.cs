@@ -4,12 +4,13 @@ using System.Buffers;
 using System.Diagnostics;
 
 Log.Logger = new LoggerConfiguration()
-    .MinimumLevel.Debug()
+    // .MinimumLevel.Error()
+    //.MinimumLevel.Debug()
     .WriteTo.Console()
     .CreateLogger();
 
 // CONSTS
-const int WorkerCount = 4;
+const int WorkerCount = 16;
 const int PORT = 5008;
 
 Log.Information("=== TLS Server with workers ===");
