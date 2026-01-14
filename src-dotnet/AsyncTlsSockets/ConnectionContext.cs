@@ -40,8 +40,6 @@ public class ConnectionContext : IDisposable
         _handle = handle;
     }
 
-    #region TLS Worker Callbacks
-
     internal void OnSocketReady()
     {
         if (_disposed == 1)
@@ -73,7 +71,6 @@ public class ConnectionContext : IDisposable
         if (_readTcs != null)
         {
             Log.Debug("[ConnectionContext] Continuing pending read on FD {Fd}", _fd);
-            // TrySslRead implementation from previous step
             int read = TrySslRead(_currentReadBuffer); 
             if (read != 0)
             {
@@ -117,8 +114,6 @@ public class ConnectionContext : IDisposable
         }
     }
 
-    #endregion
-
     #region App Logic API
 
     public ValueTask<int> WriteAsync(ReadOnlyMemory<byte> buffer)
@@ -126,6 +121,7 @@ public class ConnectionContext : IDisposable
         if (_writeTcs != null) throw new InvalidOperationException("Write already in progress");
 
         // 1. Try to write immediately
+        Log.Debug("[ConnectionContext] Trying immediate write on FD {Fd}", _fd);
         int written = TrySslWrite(buffer);
         
         if (written > 0) return new ValueTask<int>(written);
@@ -145,9 +141,10 @@ public class ConnectionContext : IDisposable
     {
         // Ensure we aren't already waiting for a read
         if (_readTcs != null) throw new InvalidOperationException("Read already in progress");
-
+        
         // 1. Try an immediate read. 
         // Data might already be sitting in OpenSSL's internal BIO buffers.
+        Log.Debug("[ConnectionContext] Trying immediate read on FD {Fd}", _fd);
         int immediateRead = TrySslRead(buffer);
 
         if (immediateRead > 0) 
