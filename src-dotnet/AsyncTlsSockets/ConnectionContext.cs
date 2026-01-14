@@ -6,10 +6,11 @@ namespace AsyncTlsSockets;
 
 public class ConnectionContext : IDisposable
 {
+    public long _id;
+
     private readonly int _epollFd;
     public readonly int _fd;
     public IntPtr _ssl;
-    private GCHandle _handle;
     private int _disposed = 0; // To prevent double-disposal
     
     private readonly ChannelWriter<ConnectionContext> _acceptQueue;
@@ -29,15 +30,6 @@ public class ConnectionContext : IDisposable
         _ssl = sslPtr;
 
         _acceptQueue = acceptQueue;
-    }
-
-    /// <summary>
-    /// Stores the GCHandle created during HandleAccept.
-    /// This handle keeps the object pinned for Linux epoll.
-    /// </summary>
-    public void SetHandle(GCHandle handle)
-    {
-        _handle = handle;
     }
 
     internal void OnSocketReady()
@@ -257,13 +249,7 @@ public class ConnectionContext : IDisposable
             Libc.close(_fd);
         }
 
-        // Unpin from the Garbage Collector
-        if (_handle.IsAllocated)
-        {
-            // CRITICAL: Now the GC is allowed to move or collect this object.
-            // After this call, the pointer stored in epoll is INVALID.
-            _handle.Free();
-        }
+        ConnectionRegistry.Unregister(_id);
 
         // Optional: If you use a TaskCompletionSource for ReadAsync, 
         // cancel it here so the app doesn't hang forever.

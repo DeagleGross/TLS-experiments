@@ -75,19 +75,11 @@ public unsafe class TlsWorker
     private void HandleData(EpollEvent ev)
     {
         // 1. Get the pointer from the event
-        IntPtr contextPtr = ev.data.ptr;
-        if (contextPtr == IntPtr.Zero)
+        var connectionContextId = ev.data.u64;
+        var connectionContext = ConnectionRegistry.Get((long)connectionContextId);
+        if (connectionContext is null)
         {
-            // Probably, already disposed connection
-            Log.Debug("[TlsWorker {_id}] Received event with null context pointer", _id);
-            return;
-        }
-
-        // 2. Convert pointer back to our C# object
-        GCHandle handle = GCHandle.FromIntPtr(contextPtr);
-        if (!handle.IsAllocated || handle.Target is not ConnectionContext context)
-        {
-            Log.Debug("[TlsWorker {_id}] Invalid GCHandle received in event", _id);
+            Log.Debug("[TlsWorker {_id}] Received event for unknown connection context ID {ContextId}", _id, connectionContextId);
             return;
         }
 
@@ -96,13 +88,13 @@ public unsafe class TlsWorker
         if ((ev.events & (uint)(EpollEvents.EPOLLIN | EpollEvents.EPOLLOUT)) != 0)
         {
             // The worker tells the context: "Something changed on the socket, try to progress"
-            context.OnSocketReady(); 
+            connectionContext.OnSocketReady(); 
         }
         // 3.3 PROCESS DISCONNECT
         else if ((ev.events & (uint)EpollEvents.EPOLLRDHUP) != 0)
         {
-            Log.Debug("[TlsWorker {_id}] Peer closed connection on FD {Fd}", _id, context._fd);
-            context.Dispose();
+            Log.Debug("[TlsWorker {_id}] Peer closed connection on FD {Fd}", _id, connectionContext._fd);
+            connectionContext.Dispose();
         }
     }
 
@@ -117,13 +109,10 @@ public unsafe class TlsWorker
 
         // Create the context and tell it who its 'parent' queue is
         var context = new ConnectionContext(_epollFd, clientFd, ssl, _acceptQueue);
-
-        // Pin for Epoll
-        GCHandle handle = GCHandle.Alloc(context);
-        context.SetHandle(handle);
+        var connectionContextId = ConnectionRegistry.Register(context);
 
         // Register in Worker's local Epoll
-        RegisterInEpoll(clientFd, GCHandle.ToIntPtr(handle));
+        RegisterInEpoll(clientFd, connectionContextId);
 
         Log.Debug("[TlsWorker {_id}] Accepted new connection on FD {Fd}", _id, clientFd);
 
@@ -131,7 +120,7 @@ public unsafe class TlsWorker
         context.DoHandshake();
     }
 
-    private void RegisterInEpoll(int clientFd, IntPtr contextPtr)
+    private void RegisterInEpoll(int clientFd, long connectionContextId)
     {
         // We watch for:
         // EPOLLIN: Data available to read
@@ -140,7 +129,7 @@ public unsafe class TlsWorker
         var ev = new EpollEvent
         {
             events = (uint)(EpollEvents.EPOLLIN | EpollEvents.EPOLLET | EpollEvents.EPOLLRDHUP),
-            data = new EpollData { ptr = contextPtr }
+            data = new EpollData { u64 = (ulong)connectionContextId }
         };
 
         if (Libc.EpollCtl(_epollFd, (int)EpollOp.ADD, clientFd, ref ev) < 0)

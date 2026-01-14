@@ -49,9 +49,6 @@ Console.CancelKeyPress += (s, e) =>
 
 var stopwatch = Stopwatch.StartNew();
 
-// Start stats printer
-_ = PrintStatsAsync(pool: null, stopwatch, cts.Token);
-
 Log.Information($"✓ Listening on port {port}");
 Log.Information("Press Ctrl+C to stop...");
 
@@ -92,29 +89,7 @@ async Task HandleConnection(ConnectionContext connection, CancellationToken canc
             ArrayPool<byte>.Shared.Return(buffer);
         }
 
-        connection.Dispose(); // close connection -> kind of what server is doing
-    }
-}
-
-/// <summary> 
-/// Print stats periodically.
-/// </summary>
-static async Task PrintStatsAsync(object pool, Stopwatch stopwatch, CancellationToken ct)
-{
-    while (!ct.IsCancellationRequested)
-    {
-        try
-        {
-            await Task.Delay(1000, ct);
-        }
-        catch (OperationCanceledException)
-        {
-            break;
-        }
-
-        var elapsed = stopwatch.Elapsed.TotalSeconds;
-        // var (completed, failed, pending) = workerPool.GetStats();
-        // Log.Information($"[{DateTime.Now:HH:mm:ss}] Handshakes: {completed} ok, {failed} fail, {pending} pending ({completed / elapsed:F2}/sec)");
+        connection.Dispose(); // closing the connection from server
     }
 }
 

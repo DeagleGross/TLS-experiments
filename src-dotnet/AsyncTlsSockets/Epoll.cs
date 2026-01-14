@@ -25,6 +25,7 @@ public struct EpollData
 {
     [FieldOffset(0)] public IntPtr ptr;
     [FieldOffset(0)] public int fd;
+    [FieldOffset(0)] public ulong u64; // id of connection context
 }
 
 [StructLayout(LayoutKind.Sequential, Pack = 1)]
