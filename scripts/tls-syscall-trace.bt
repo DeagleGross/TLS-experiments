@@ -1,0 +1,110 @@
+#!/usr/bin/env bpftrace
+
+/*
+ * TLS Handshake Syscall Tracer
+ * 
+ * Traces key syscalls during TLS handshakes to identify bottlenecks:
+ * - epoll_wait: How long we wait for I/O events
+ * - read/write: Socket I/O patterns
+ * - futex: Lock contention (ThreadPool, async machinery)
+ * 
+ * Run with: sudo bpftrace tls-syscall-trace.bt -p <pid>
+ */
+
+BEGIN
+{
+    printf("Tracing TLS syscalls for 30s (Ctrl+C to stop)...\n");
+    printf("Looking for patterns: epoll_wait latency, futex contention, read/write sizes\n\n");
+}
+
+// Track epoll_wait latency
+tracepoint:syscalls:sys_enter_epoll_wait
+/pid == $1/
+{
+    @epoll_start[tid] = nsecs;
+}
+
+tracepoint:syscalls:sys_exit_epoll_wait
+/pid == $1 && @epoll_start[tid]/
+{
+    $latency_us = (nsecs - @epoll_start[tid]) / 1000;
+    @epoll_latency_us = hist($latency_us);
+    @epoll_count = count();
+    delete(@epoll_start[tid]);
+}
+
+// Track futex calls (indicates lock contention)
+tracepoint:syscalls:sys_enter_futex
+/pid == $1/
+{
+    @futex_start[tid] = nsecs;
+    @futex_ops[args->op & 0xf] = count();  // futex operation type
+}
+
+tracepoint:syscalls:sys_exit_futex
+/pid == $1 && @futex_start[tid]/
+{
+    $latency_us = (nsecs - @futex_start[tid]) / 1000;
+    @futex_latency_us = hist($latency_us);
+    delete(@futex_start[tid]);
+}
+
+// Track read sizes
+tracepoint:syscalls:sys_exit_read
+/pid == $1 && args->ret > 0/
+{
+    @read_sizes = hist(args->ret);
+    @read_count = count();
+}
+
+// Track write sizes  
+tracepoint:syscalls:sys_exit_write
+/pid == $1 && args->ret > 0/
+{
+    @write_sizes = hist(args->ret);
+    @write_count = count();
+}
+
+// Track thread context switches (indicates ThreadPool churn)
+tracepoint:sched:sched_switch
+/args->prev_pid == $1 || args->next_pid == $1/
+{
+    @context_switches = count();
+}
+
+END
+{
+    printf("\n=== Results ===\n");
+    
+    printf("\n--- Epoll Wait Latency (microseconds) ---\n");
+    print(@epoll_latency_us);
+    printf("Total epoll_wait calls: ");
+    print(@epoll_count);
+    
+    printf("\n--- Futex Latency (microseconds) - indicates lock contention ---\n");
+    print(@futex_latency_us);
+    printf("Futex ops (0=WAIT, 1=WAKE): ");
+    print(@futex_ops);
+    
+    printf("\n--- Read Sizes ---\n");
+    print(@read_sizes);
+    
+    printf("\n--- Write Sizes ---\n");
+    print(@write_sizes);
+    
+    printf("\n--- Context Switches ---\n");
+    print(@context_switches);
+    
+    // Cleanup
+    clear(@epoll_start);
+    clear(@futex_start);
+    clear(@epoll_latency_us);
+    clear(@futex_latency_us);
+    clear(@futex_ops);
+    clear(@read_sizes);
+    clear(@write_sizes);
+    clear(@epoll_count);
+    clear(@read_count);
+    clear(@write_count);
+    clear(@context_switches);
+}

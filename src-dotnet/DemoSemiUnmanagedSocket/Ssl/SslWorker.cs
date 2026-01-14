@@ -89,12 +89,14 @@ internal sealed class SslWorker
         while (_running)
         {
             // 1. Try to pick up new requests from shared queue
-            ProcessNewRequests();
+            bool processedNewRequests = ProcessNewRequests();
 
-            // 2. Determine timeout based on whether we have active connections
-            //    If no connections, use longer timeout to avoid busy spin
-            //    If we have connections, use short timeout to stay responsive to new requests
-            int timeout = _activeConnections.Count == 0 ? 100 : EpollTimeoutMs;
+            // 2. Determine timeout:
+            //    - 0 if we just processed new requests (check for ready events immediately)
+            //    - 100ms if no active connections (avoid busy spin)
+            //    - 10ms otherwise (stay responsive to new requests)
+            int timeout = processedNewRequests ? 0 
+                        : (_activeConnections.Count == 0 ? 100 : EpollTimeoutMs);
 
             // 3. Wait for socket events (batch mode - get multiple events per syscall)
             int numReady = NativeSsl.epoll_wait_batch(_epollFd, timeout, readyFds, MaxBatchEvents);
@@ -125,8 +127,10 @@ internal sealed class SslWorker
     /// Process new handshake requests from the shared queue.
     /// Each worker competes to dequeue - natural load balancing.
     /// </summary>
-    private void ProcessNewRequests()
+    /// <returns>True if any requests were processed</returns>
+    private bool ProcessNewRequests()
     {
+        bool processed = false;
         // Try to grab one or more requests from shared queue
         while (_sharedQueue.TryDequeue(out var request))
         {
@@ -149,7 +153,9 @@ internal sealed class SslWorker
 
             // Try handshake immediately (might complete in one call for resumed sessions)
             TryAdvanceHandshake(request);
+            processed = true;
         }
+        return processed;
     }
 
     /// <summary>
