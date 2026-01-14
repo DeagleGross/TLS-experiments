@@ -6,22 +6,25 @@ namespace AsyncTlsSockets;
 
 public class ConnectionContext : IDisposable
 {
+    private readonly int _epollFd;
     public readonly int _fd;
     public readonly IntPtr _ssl;
     private GCHandle _handle;
     private int _disposed = 0; // To prevent double-disposal
+    
+    private readonly ChannelWriter<ConnectionContext> _acceptQueue;
+
+    private TaskCompletionSource<int>? _writeTcs;
+    private ReadOnlyMemory<byte> _pendingWriteBuffer;
 
     private TaskCompletionSource<int>? _readTcs;
-    private TaskCompletionSource<int>? _writeTcs;
-
     private Memory<byte> _currentReadBuffer;
-
-    private readonly ChannelWriter<ConnectionContext> _acceptQueue;
 
     public bool HandshakeComplete { get; private set; }
 
-    public ConnectionContext(int fd, IntPtr sslPtr, ChannelWriter<ConnectionContext> acceptQueue)
+    public ConnectionContext(int epollFd, int fd, IntPtr sslPtr, ChannelWriter<ConnectionContext> acceptQueue)
     {
+        _epollFd = epollFd;
         _fd = fd;
         _ssl = sslPtr;
 
@@ -39,23 +42,39 @@ public class ConnectionContext : IDisposable
 
     #region TLS Worker Callbacks
 
-    public void OnDataAvailable()
+    internal void OnSocketReady()
     {
         if (!HandshakeComplete)
         {
+            Log.Debug("[ConnectionContext] Continuing handshake on FD {Fd}", _fd);
             DoHandshake();
             return;
         }
 
-        // If a ReadAsync is waiting, fulfill it
+        // Handle Pending Write First (usually higher priority to clear buffers)
+        if (_writeTcs != null)
+        {
+            Log.Debug("[ConnectionContext] Continuing pending write on FD {Fd}", _fd);
+            int written = TrySslWrite(_pendingWriteBuffer);
+            if (written > 0)
+            {
+                var tcs = _writeTcs;
+                _writeTcs = null;
+                tcs.TrySetResult(written);
+            }
+        }
+
+        // Handle Pending Read
         if (_readTcs != null)
         {
-            int bytes = DecryptAndFillBuffer();
-            if (bytes > 0)
+            Log.Debug("[ConnectionContext] Continuing pending read on FD {Fd}", _fd);
+            // TrySslRead implementation from previous step
+            int read = TrySslRead(_currentReadBuffer); 
+            if (read != 0)
             {
                 var tcs = _readTcs;
                 _readTcs = null;
-                tcs.SetResult(bytes);
+                tcs.TrySetResult(read > 0 ? read : 0);
             }
         }
     }
@@ -97,46 +116,109 @@ public class ConnectionContext : IDisposable
 
     #region App Logic API
 
-    public ValueTask<int> WriteAsync(Memory<byte> buffer, CancellationToken cancellationToken)
+    public ValueTask<int> WriteAsync(ReadOnlyMemory<byte> buffer)
     {
         if (_writeTcs != null) throw new InvalidOperationException("Write already in progress");
 
-        return new ValueTask<int>(_readTcs.Task);
+        // 1. Try to write immediately
+        int written = TrySslWrite(buffer);
+        
+        if (written > 0) return new ValueTask<int>(written);
+        
+        // 2. If written == 0, it means WANT_WRITE (Buffer full)
+        _pendingWriteBuffer = buffer;
+        _writeTcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        
+        // We don't need to 'MOD' epoll because we already registered with EPOLLET 
+        // and potentially EPOLLOUT. If you didn't include EPOLLOUT in the initial 
+        // ADD, you must call EpollCtl MOD here.
+        
+        return new ValueTask<int>(_writeTcs.Task);
     }
 
-    public ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken)
+    public ValueTask<int> ReadAsync(Memory<byte> buffer)
     {
+        // Ensure we aren't already waiting for a read
         if (_readTcs != null) throw new InvalidOperationException("Read already in progress");
 
-        _currentReadBuffer = buffer;
-        // Use RunContinuationsAsynchronously to keep app logic off the worker thread
-        _readTcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        // 1. Try an immediate read. 
+        // Data might already be sitting in OpenSSL's internal BIO buffers.
+        int immediateRead = TrySslRead(buffer);
 
-        // Try an immediate read in case data is already in OpenSSL internal buffers
-        int immediate = DecryptAndFillBuffer();
-        if (immediate > 0)
+        if (immediateRead > 0) 
         {
-            _readTcs = null;
-            return new ValueTask<int>(immediate);
+            return new ValueTask<int>(immediateRead);
+        }
+        
+        if (immediateRead < 0) 
+        {
+            return new ValueTask<int>(0); // EOF
         }
 
+        // 2. Data not ready. Store the state and return the Task.
+        _currentReadBuffer = buffer;
+        
+        // Use RunContinuationsAsynchronously to ensure the 'App' code 
+        // doesn't run on our 'Worker' CPU core.
+        _readTcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        
         return new ValueTask<int>(_readTcs.Task);
     }
 
     #endregion
 
-    private unsafe int DecryptAndFillBuffer()
+    private unsafe int TrySslWrite(ReadOnlyMemory<byte> buffer)
     {
-        using var pin = _currentReadBuffer.Pin();
-        int bytes = NativeOpenSsl.SSL_read(_ssl, (IntPtr)pin.Pointer, _currentReadBuffer.Length);
+        using var pin = buffer.Pin();
+        int result = NativeOpenSsl.SSL_write(_ssl, (IntPtr)pin.Pointer, buffer.Length);
 
-        if (bytes <= 0)
+        if (result > 0) return result;
+
+        int err = NativeOpenSsl.SSL_get_error(_ssl, result);
+        if (err == NativeOpenSsl.SSL_ERROR_WANT_WRITE || err == NativeOpenSsl.SSL_ERROR_WANT_READ)
         {
-            int error = NativeOpenSsl.SSL_get_error(_ssl, bytes);
-            // Handle close or WANT_READ
-            return 0;
+            return 0; // Blocked
         }
-        return bytes;
+
+        return -1; // Critical Error
+    }
+
+    private unsafe int TrySslRead(Memory<byte> buffer)
+    {
+        int totalRead = 0;
+        using var pin = buffer.Pin();
+        byte* ptr = (byte*)pin.Pointer;
+
+        while (totalRead < buffer.Length)
+        {
+            int result = NativeOpenSsl.SSL_read(_ssl, (IntPtr)(ptr + totalRead), buffer.Length - totalRead);
+
+            if (result > 0)
+            {
+                totalRead += result;
+                // In Edge-Triggered, we keep reading until we hit an error or buffer is full
+                continue; 
+            }
+
+            int err = NativeOpenSsl.SSL_get_error(_ssl, result);
+
+            if (err == NativeOpenSsl.SSL_ERROR_WANT_READ)
+            {
+                // The kernel buffer is officially empty.
+                return totalRead;
+            }
+
+            if (err == NativeOpenSsl.SSL_ERROR_ZERO_RETURN)
+            {
+                // Peer closed TLS session gracefully
+                return -1; 
+            }
+
+            // Critical error (SYSCALL or SSL)
+            return -1; 
+        }
+
+        return totalRead;
     }
 
     public void Dispose()
@@ -148,9 +230,17 @@ public class ConnectionContext : IDisposable
         if (Interlocked.Exchange(ref _disposed, 1) == 1)
             return;
 
+        // 0. Unregister from epoll so no more events arrive
+        var ev = new EpollEvent();
+        Libc.EpollCtl(_epollFd, (int)EpollOp.DEL, _fd, ref ev);
+
         // 1. Clean up OpenSSL
         if (_ssl != IntPtr.Zero)
         {
+            // 1. Send the "close_notify" alert to the client
+            // This tells the OpenSSL CLI that the stream is officially over
+            NativeOpenSsl.SSL_shutdown(_ssl);
+
             // This frees the SSL state machine memory
             NativeOpenSsl.SSL_free(_ssl);
         }

@@ -60,5 +60,8 @@ internal static class NativeOpenSsl
     [DllImport("libssl.so.3", CallingConvention = CallingConvention.Cdecl)]
     public static extern void SSL_free(IntPtr ssl);
 
+    [DllImport("libssl.so.3", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int SSL_shutdown(IntPtr ssl);
+
     #endregion
 }

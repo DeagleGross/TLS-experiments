@@ -62,18 +62,47 @@ public unsafe class TlsWorker
 
                 if (currentEv.data.fd == _listenFd)
                 {
-                    Log.Debug("[TlsWorker {_id}] New connection ready to accept", _id);
-
                     HandleAccept();
                 }
                 else
                 {
-                    Log.Debug("[TlsWorker {_id}] new work on connection fd='{connectionFd}'", _id, currentEv.data.fd);
-
-                    // This is where you retrieve your ConnectionContext from data.ptr
-                    // and perform SSL_read / SSL_write
+                    HandleData(currentEv);
                 }
             }
+        }
+    }
+
+    private void HandleData(EpollEvent ev)
+    {
+        // 1. Get the pointer from the event
+        IntPtr contextPtr = ev.data.ptr;
+        if (contextPtr == IntPtr.Zero)
+        {
+            // Probably, already disposed connection
+            Log.Debug("[TlsWorker {_id}] Received event with null context pointer", _id);
+            return;
+        }
+
+        // 2. Convert pointer back to our C# object
+        GCHandle handle = GCHandle.FromIntPtr(contextPtr);
+        if (!handle.IsAllocated || handle.Target is not ConnectionContext context)
+        {
+            Log.Debug("[TlsWorker {_id}] Invalid GCHandle received in event", _id);
+            return;
+        }
+
+        // 3.1 & 3.2 Process READ and WRITE
+        // We check both because a single event can have both flags
+        if ((ev.events & (uint)(EpollEvents.EPOLLIN | EpollEvents.EPOLLOUT)) != 0)
+        {
+            // The worker tells the context: "Something changed on the socket, try to progress"
+            context.OnSocketReady(); 
+        }
+        // 3.3 PROCESS DISCONNECT
+        else if ((ev.events & (uint)EpollEvents.EPOLLRDHUP) != 0)
+        {
+            Log.Debug("[TlsWorker {_id}] Peer closed connection on FD {Fd}", _id, context._fd);
+            context.Dispose();
         }
     }
 
@@ -87,7 +116,7 @@ public unsafe class TlsWorker
         NativeOpenSsl.SSL_set_accept_state(ssl);
 
         // Create the context and tell it who its 'parent' queue is
-        var context = new ConnectionContext(clientFd, ssl, _acceptQueue);
+        var context = new ConnectionContext(_epollFd, clientFd, ssl, _acceptQueue);
 
         // Pin for Epoll
         GCHandle handle = GCHandle.Alloc(context);
@@ -95,6 +124,8 @@ public unsafe class TlsWorker
 
         // Register in Worker's local Epoll
         RegisterInEpoll(clientFd, GCHandle.ToIntPtr(handle));
+
+        Log.Debug("[TlsWorker {_id}] Accepted new connection on FD {Fd}", _id, clientFd);
 
         // Kick off the handshake
         context.DoHandshake();

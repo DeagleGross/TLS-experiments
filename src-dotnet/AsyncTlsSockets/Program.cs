@@ -1,9 +1,7 @@
 ﻿using AsyncTlsSockets;
 using Serilog;
-using System;
 using System.Buffers;
 using System.Diagnostics;
-using System.Net.Security;
 
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Debug()
@@ -74,16 +72,14 @@ async Task HandleConnection(ConnectionContext connection, CancellationToken canc
     try
     {
         buffer = ArrayPool<byte>.Shared.Rent(4096);
-        var bytesRead = await connection.ReadAsync(buffer, cancellationToken);
+        var bytesRead = await connection.ReadAsync(buffer);
 
         if (bytesRead > 0)
         {
             // Send minimal HTTP response
             var response = "HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello, World!"u8.ToArray();
-            await connection.WriteAsync(response, cancellationToken);
-        }
-
-        // ... Send HTTP Response ...
+            await connection.WriteAsync(response);
+        }        
     }
     finally
     {
@@ -91,6 +87,8 @@ async Task HandleConnection(ConnectionContext connection, CancellationToken canc
         {
             ArrayPool<byte>.Shared.Return(buffer);
         }
+
+        connection.Dispose(); // close connection -> kind of what server is doing
     }
 }
 
