@@ -1,4 +1,4 @@
-﻿using System.Runtime.InteropServices;
+using System.Runtime.InteropServices;
 
 namespace AsyncTlsSockets;
 
@@ -37,15 +37,15 @@ public struct EpollEvent
 
 internal static partial class Libc
 {
-    [DllImport("libc", EntryPoint = "epoll_create1")]
-    public static extern int EpollCreate1(int flags);
+    [LibraryImport("libc", EntryPoint = "epoll_create1")]
+    public static partial int EpollCreate1(int flags);
 
-    [DllImport("libc", EntryPoint = "epoll_ctl")]
-    public static extern int EpollCtl(int epfd, int op, int fd, ref EpollEvent ev);
+    [LibraryImport("libc", EntryPoint = "epoll_ctl")]
+    public static partial int EpollCtl(int epfd, int op, int fd, ref EpollEvent ev);
 
-    [DllImport("libc", EntryPoint = "epoll_wait")]
-    public static extern int EpollWait(int epfd, [Out] EpollEvent[] events, int maxevents, int timeout);
+    [LibraryImport("libc", EntryPoint = "epoll_wait")]
+    public static partial int EpollWait(int epfd, [Out] EpollEvent[] events, int maxevents, int timeout);
 
-    [DllImport("libc", EntryPoint = "fcntl")]
-    public static extern int Fcntl(int fd, int cmd, int arg);
+    [LibraryImport("libc", EntryPoint = "fcntl")]
+    public static partial int Fcntl(int fd, int cmd, int arg);
 }

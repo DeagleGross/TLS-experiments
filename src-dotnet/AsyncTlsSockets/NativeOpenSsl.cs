@@ -1,8 +1,8 @@
-﻿using System.Runtime.InteropServices;
+using System.Runtime.InteropServices;
 
 namespace AsyncTlsSockets;
 
-internal static class NativeOpenSsl
+internal static partial class NativeOpenSsl
 {
     // OpenSSL Error Codes
     public const int SSL_ERROR_NONE = 0;
@@ -30,39 +30,39 @@ internal static class NativeOpenSsl
 
     #region Context
 
-    [DllImport("libssl.so.3")] // Use .so.1.1 if on older Linux
-    public static extern int OPENSSL_init_ssl(ulong opts, IntPtr settings);
+    [LibraryImport("libssl.so.3")] // Use .so.1.1 if on older Linux
+    public static partial int OPENSSL_init_ssl(ulong opts, IntPtr settings);
 
-    [DllImport("libssl.so.3")]
-    public static extern IntPtr TLS_server_method();
+    [LibraryImport("libssl.so.3")]
+    public static partial IntPtr TLS_server_method();
 
-    [DllImport("libssl.so.3")]
-    public static extern IntPtr SSL_CTX_new(IntPtr method);
+    [LibraryImport("libssl.so.3")]
+    public static partial IntPtr SSL_CTX_new(IntPtr method);
 
-    [DllImport("libssl.so.3", CallingConvention = CallingConvention.Cdecl)]
-    public static extern IntPtr SSL_new(IntPtr ctx);
+    [LibraryImport("libssl.so.3")]
+    public static partial IntPtr SSL_new(IntPtr ctx);
 
-    [DllImport("libssl.so.3", CallingConvention = CallingConvention.Cdecl)]
-    public static extern int SSL_set_fd(IntPtr ssl, int fd);
+    [LibraryImport("libssl.so.3")]
+    public static partial int SSL_set_fd(IntPtr ssl, int fd);
 
-    [DllImport("libssl.so.3", CallingConvention = CallingConvention.Cdecl)]
-    public static extern void SSL_set_accept_state(IntPtr ssl);
+    [LibraryImport("libssl.so.3")]
+    public static partial void SSL_set_accept_state(IntPtr ssl);
 
-    [DllImport("libssl.so.3")]
-    public static extern int SSL_CTX_use_certificate_chain_file(IntPtr ctx, string file);
+    [LibraryImport("libssl.so.3", StringMarshalling = StringMarshalling.Utf8)]
+    public static partial int SSL_CTX_use_certificate_chain_file(IntPtr ctx, string file);
 
-    [DllImport("libssl.so.3")]
-    public static extern int SSL_CTX_use_PrivateKey_file(IntPtr ctx, string file, int type);
+    [LibraryImport("libssl.so.3", StringMarshalling = StringMarshalling.Utf8)]
+    public static partial int SSL_CTX_use_PrivateKey_file(IntPtr ctx, string file, int type);
 
-    [DllImport("libssl.so.3")]
-    public static extern int SSL_CTX_check_private_key(IntPtr ctx);
+    [LibraryImport("libssl.so.3")]
+    public static partial int SSL_CTX_check_private_key(IntPtr ctx);
 
-    [DllImport("libssl.so.3")]
-    public static extern long SSL_CTX_set_options(IntPtr ctx, long options);
+    [LibraryImport("libssl.so.3")]
+    public static partial long SSL_CTX_set_options(IntPtr ctx, long options);
 
     // SSL_CTX_ctrl is the underlying function for SSL_CTX_set_mode and SSL_CTX_set_read_ahead macros
-    [DllImport("libssl.so.3")]
-    public static extern long SSL_CTX_ctrl(IntPtr ctx, int cmd, long larg, IntPtr parg);
+    [LibraryImport("libssl.so.3")]
+    public static partial long SSL_CTX_ctrl(IntPtr ctx, int cmd, long larg, IntPtr parg);
 
     // Wrapper methods to match the macro API
     public static long SSL_CTX_set_mode(IntPtr ctx, long mode)
@@ -71,11 +71,11 @@ internal static class NativeOpenSsl
     public static long SSL_CTX_set_read_ahead(IntPtr ctx, int yes)
         => SSL_CTX_ctrl(ctx, SSL_CTRL_SET_READ_AHEAD, yes, IntPtr.Zero);
 
-    [DllImport("libssl.so.3")]
-    public static extern IntPtr SSL_get_wbio(IntPtr ssl);
+    [LibraryImport("libssl.so.3")]
+    public static partial IntPtr SSL_get_wbio(IntPtr ssl);
 
-    [DllImport("libcrypto.so.3")]
-    public static extern long BIO_ctrl(IntPtr bio, int cmd, long larg, IntPtr parg);
+    [LibraryImport("libcrypto.so.3")]
+    public static partial long BIO_ctrl(IntPtr bio, int cmd, long larg, IntPtr parg);
 
     public static long BIO_set_write_buffer_size(IntPtr bio, long size)
         => BIO_ctrl(bio, BIO_C_SET_WRITE_BUF_SIZE, size, IntPtr.Zero);
@@ -84,23 +84,23 @@ internal static class NativeOpenSsl
 
     #region API
 
-    [DllImport("libssl.so.3", CallingConvention = CallingConvention.Cdecl)]
-    public static extern int SSL_do_handshake(IntPtr ssl);
+    [LibraryImport("libssl.so.3")]
+    public static partial int SSL_do_handshake(IntPtr ssl);
 
-    [DllImport("libssl.so.3", CallingConvention = CallingConvention.Cdecl)]
-    public static extern int SSL_get_error(IntPtr ssl, int ret);
+    [LibraryImport("libssl.so.3")]
+    public static partial int SSL_get_error(IntPtr ssl, int ret);
 
-    [DllImport("libssl.so.3", CallingConvention = CallingConvention.Cdecl)]
-    public static extern int SSL_read(IntPtr ssl, IntPtr buf, int num);
+    [LibraryImport("libssl.so.3")]
+    public static partial int SSL_read(IntPtr ssl, IntPtr buf, int num);
 
-    [DllImport("libssl.so.3", CallingConvention = CallingConvention.Cdecl)]
-    public static extern int SSL_write(IntPtr ssl, IntPtr buf, int num);
+    [LibraryImport("libssl.so.3")]
+    public static partial int SSL_write(IntPtr ssl, IntPtr buf, int num);
 
-    [DllImport("libssl.so.3", CallingConvention = CallingConvention.Cdecl)]
-    public static extern void SSL_free(IntPtr ssl);
+    [LibraryImport("libssl.so.3")]
+    public static partial void SSL_free(IntPtr ssl);
 
-    [DllImport("libssl.so.3", CallingConvention = CallingConvention.Cdecl)]
-    public static extern int SSL_shutdown(IntPtr ssl);
+    [LibraryImport("libssl.so.3")]
+    public static partial int SSL_shutdown(IntPtr ssl);
 
     #endregion
 }
