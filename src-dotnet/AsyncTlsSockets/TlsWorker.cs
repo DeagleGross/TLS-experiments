@@ -35,8 +35,15 @@ public unsafe class TlsWorker
         thread.Start();
     }
 
-    private void RunLoop()
+    private unsafe void RunLoop()
     {
+        // 0. Pin this worker thread to a specific CPU core
+        int numCpus = Libc.get_nprocs();
+        int targetCpu = _id % numCpus;
+        ulong cpuMask = 1UL << targetCpu;
+        Libc.sched_setaffinity(0, (nuint)sizeof(ulong), &cpuMask);  // 0 = current thread
+        Log.Information("[TlsWorker {_id}] Pinned to CPU {Cpu}/{Total}", _id, targetCpu, numCpus);
+
         // 1. Initialize OpenSSL Context for this thread
         InitOpenSsl();
 

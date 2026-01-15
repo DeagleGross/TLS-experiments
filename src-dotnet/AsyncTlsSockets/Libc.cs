@@ -17,6 +17,14 @@ internal static partial class Libc
 
     [LibraryImport("libc", SetLastError = true)]
     public static partial int close(int fd);
+
+    // CPU affinity - pin thread to specific core(s)
+    [LibraryImport("libc", SetLastError = true)]
+    public static unsafe partial int sched_setaffinity(int pid, nuint cpusetsize, ulong* mask);
+
+    // Get number of CPUs
+    [LibraryImport("libc")]
+    public static partial int get_nprocs();
 }
 
 [StructLayout(LayoutKind.Sequential)]
