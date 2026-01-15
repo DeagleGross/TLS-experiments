@@ -107,6 +107,11 @@ public unsafe class TlsWorker
         NativeOpenSsl.SSL_set_fd(ssl, clientFd);
         NativeOpenSsl.SSL_set_accept_state(ssl);
 
+        // Set write BIO buffer size to 16KB (matches nginx).
+        IntPtr wbio = NativeOpenSsl.SSL_get_wbio(ssl);
+        if (wbio != IntPtr.Zero)
+            NativeOpenSsl.BIO_set_write_buffer_size(wbio, 16384);
+
         // Create the context and tell it who its 'parent' queue is
         var context = new ConnectionContext(_epollFd, clientFd, ssl, _acceptQueue);
         var connectionContextId = ConnectionRegistry.Register(context);

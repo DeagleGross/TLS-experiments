@@ -19,6 +19,9 @@ internal static class NativeOpenSsl
     // SSL_CTX_ctrl commands (SSL_CTX_set_mode and SSL_CTX_set_read_ahead are macros)
     public const int SSL_CTRL_MODE = 33;
     public const int SSL_CTRL_SET_READ_AHEAD = 41;
+
+    // BIO_ctrl commands
+    public const int BIO_C_SET_WRITE_BUF_SIZE = 136;
     public const int SSL_ERROR_SSL = 1;
     public const int SSL_ERROR_WANT_READ = 2;    // The "Wait and Retry" signal
     public const int SSL_ERROR_WANT_WRITE = 3;   // Socket buffer full signal
@@ -67,6 +70,15 @@ internal static class NativeOpenSsl
 
     public static long SSL_CTX_set_read_ahead(IntPtr ctx, int yes)
         => SSL_CTX_ctrl(ctx, SSL_CTRL_SET_READ_AHEAD, yes, IntPtr.Zero);
+
+    [DllImport("libssl.so.3")]
+    public static extern IntPtr SSL_get_wbio(IntPtr ssl);
+
+    [DllImport("libcrypto.so.3")]
+    public static extern long BIO_ctrl(IntPtr bio, int cmd, long larg, IntPtr parg);
+
+    public static long BIO_set_write_buffer_size(IntPtr bio, long size)
+        => BIO_ctrl(bio, BIO_C_SET_WRITE_BUF_SIZE, size, IntPtr.Zero);
 
     #endregion
 
