@@ -1,0 +1,106 @@
+using System.Runtime.InteropServices;
+
+namespace AsyncTlsSockets;
+
+internal static partial class NativeOpenSsl
+{
+    // OpenSSL Error Codes
+    public const int SSL_ERROR_NONE = 0;
+
+    // SSL_CTX_set_options flags
+    public const long SSL_OP_NO_COMPRESSION = 0x00020000L;           // Disable compression (~522KB/conn saved)
+    public const long SSL_OP_SINGLE_ECDH_USE = 0x00080000L;          // Fresh ECDH key per handshake
+    public const long SSL_OP_NO_CLIENT_RENEGOTIATION = 0x00001000L;  // Block client renegotiation (DoS protection)
+    public const long SSL_OP_IGNORE_UNEXPECTED_EOF = 0x00000080L;    // OpenSSL 3.0+: treat unexpected EOF as normal
+
+    // SSL_CTX_set_mode flags
+    public const long SSL_MODE_RELEASE_BUFFERS = 0x00000010L;        // Release buffers when idle (~34KB/conn saved)
+
+    // SSL_CTX_ctrl commands (SSL_CTX_set_mode and SSL_CTX_set_read_ahead are macros)
+    public const int SSL_CTRL_MODE = 33;
+    public const int SSL_CTRL_SET_READ_AHEAD = 41;
+
+    // BIO_ctrl commands
+    public const int BIO_C_SET_WRITE_BUF_SIZE = 136;
+    public const int SSL_ERROR_SSL = 1;
+    public const int SSL_ERROR_WANT_READ = 2;    // The "Wait and Retry" signal
+    public const int SSL_ERROR_WANT_WRITE = 3;   // Socket buffer full signal
+    public const int SSL_ERROR_SYSCALL = 5;      // Low-level IO error
+    public const int SSL_ERROR_ZERO_RETURN = 6;  // Connection closed gracefully
+
+    #region Context
+
+    [LibraryImport("libssl.so.3")] // Use .so.1.1 if on older Linux
+    public static partial int OPENSSL_init_ssl(ulong opts, IntPtr settings);
+
+    [LibraryImport("libssl.so.3")]
+    public static partial IntPtr TLS_server_method();
+
+    [LibraryImport("libssl.so.3")]
+    public static partial IntPtr SSL_CTX_new(IntPtr method);
+
+    [LibraryImport("libssl.so.3")]
+    public static partial IntPtr SSL_new(IntPtr ctx);
+
+    [LibraryImport("libssl.so.3")]
+    public static partial int SSL_set_fd(IntPtr ssl, int fd);
+
+    [LibraryImport("libssl.so.3")]
+    public static partial void SSL_set_accept_state(IntPtr ssl);
+
+    [LibraryImport("libssl.so.3", StringMarshalling = StringMarshalling.Utf8)]
+    public static partial int SSL_CTX_use_certificate_chain_file(IntPtr ctx, string file);
+
+    [LibraryImport("libssl.so.3", StringMarshalling = StringMarshalling.Utf8)]
+    public static partial int SSL_CTX_use_PrivateKey_file(IntPtr ctx, string file, int type);
+
+    [LibraryImport("libssl.so.3")]
+    public static partial int SSL_CTX_check_private_key(IntPtr ctx);
+
+    [LibraryImport("libssl.so.3")]
+    public static partial long SSL_CTX_set_options(IntPtr ctx, long options);
+
+    // SSL_CTX_ctrl is the underlying function for SSL_CTX_set_mode and SSL_CTX_set_read_ahead macros
+    [LibraryImport("libssl.so.3")]
+    public static partial long SSL_CTX_ctrl(IntPtr ctx, int cmd, long larg, IntPtr parg);
+
+    // Wrapper methods to match the macro API
+    public static long SSL_CTX_set_mode(IntPtr ctx, long mode)
+        => SSL_CTX_ctrl(ctx, SSL_CTRL_MODE, mode, IntPtr.Zero);
+
+    public static long SSL_CTX_set_read_ahead(IntPtr ctx, int yes)
+        => SSL_CTX_ctrl(ctx, SSL_CTRL_SET_READ_AHEAD, yes, IntPtr.Zero);
+
+    [LibraryImport("libssl.so.3")]
+    public static partial IntPtr SSL_get_wbio(IntPtr ssl);
+
+    [LibraryImport("libcrypto.so.3")]
+    public static partial long BIO_ctrl(IntPtr bio, int cmd, long larg, IntPtr parg);
+
+    public static long BIO_set_write_buffer_size(IntPtr bio, long size)
+        => BIO_ctrl(bio, BIO_C_SET_WRITE_BUF_SIZE, size, IntPtr.Zero);
+
+    #endregion
+
+    #region API
+
+    [LibraryImport("libssl.so.3")]
+    public static partial int SSL_do_handshake(IntPtr ssl);
+
+    [LibraryImport("libssl.so.3")]
+    public static partial int SSL_get_error(IntPtr ssl, int ret);
+
+    [LibraryImport("libssl.so.3")]
+    public static partial int SSL_read(IntPtr ssl, IntPtr buf, int num);
+
+    [LibraryImport("libssl.so.3")]
+    public static partial int SSL_write(IntPtr ssl, IntPtr buf, int num);
+
+    [LibraryImport("libssl.so.3")]
+    public static partial void SSL_free(IntPtr ssl);
+
+    [LibraryImport("libssl.so.3")]
+    public static partial int SSL_shutdown(IntPtr ssl);
+
+    #endregion
+}

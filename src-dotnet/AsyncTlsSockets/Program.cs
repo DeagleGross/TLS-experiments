@@ -1,13 +1,20 @@
-﻿using System.Diagnostics;
-using System.Net;
-using System.Net.Sockets;
+﻿using AsyncTlsSockets;
+using Serilog;
+using System.Buffers;
+using System.Diagnostics;
+
+Log.Logger = new LoggerConfiguration()
+    // .MinimumLevel.Error()
+    //.MinimumLevel.Debug()
+    .WriteTo.Console()
+    .CreateLogger();
 
 // CONSTS
-const int WorkerCount = 4;
+const int WorkerCount = 16;
 const int PORT = 5008;
 
-Console.WriteLine("=== TLS Server with Async socket read \\ write ===");
-Console.WriteLine();
+Log.Information("=== TLS Server with workers ===");
+Log.Information("------");
 
 // Parse arguments
 int port = args.Length > 0 ? int.Parse(args[0]) : PORT;
@@ -17,20 +24,21 @@ int workerCount = args.Length > 1 ? int.Parse(args[1]) : WorkerCount;
 var (certPath, keyPath) = FindCertificatePaths();
 if (certPath == null || keyPath == null)
 {
-    Console.WriteLine("ERROR: No certificate files found!");
+    Log.Information("ERROR: No certificate files found!");
     return;
 }
 
-Console.WriteLine($"Port: {port}");
-Console.WriteLine($"Workers: {workerCount}");
-Console.WriteLine($"Cert: {certPath}");
-Console.WriteLine($"Key: {keyPath}");
-Console.WriteLine();
+var controller = new WorkerController(port, certPath, keyPath, workerCount);
 
-Console.WriteLine($"✓ Listening on port {port}");
-Console.WriteLine();
-Console.WriteLine("Press Ctrl+C to stop...");
-Console.WriteLine();
+Log.Information($"Port: {port}");
+Log.Information($"Workers: {workerCount}");
+Log.Information($"Cert: {certPath}");
+Log.Information($"Key: {keyPath}");
+Log.Information("------");
+
+AppDomain.CurrentDomain.UnhandledException += (s, e) => {
+    Console.WriteLine($"FATAL: {e.ExceptionObject}");
+};
 
 // Handle Ctrl+C
 var cts = new CancellationTokenSource();
@@ -42,28 +50,47 @@ Console.CancelKeyPress += (s, e) =>
 
 var stopwatch = Stopwatch.StartNew();
 
-// Start stats printer
-_ = PrintStatsAsync(pool: null, stopwatch, cts.Token);
+Log.Information($"✓ Listening on port {port}");
+Log.Information("Press Ctrl+C to stop...");
 
-/// <summary> 
-/// Print stats periodically.
-/// </summary>
-static async Task PrintStatsAsync(object pool, Stopwatch stopwatch, CancellationToken ct)
+controller.StartWorkers();
+
+while (!cts.IsCancellationRequested)
 {
-    while (!ct.IsCancellationRequested)
+    // Awaits until ANY worker finishes a TLS handshake
+    var connection = await controller.AcceptAsync(cts.Token);
+
+    // Process the request in a background task so we can Accept the next one immediately
+    _ = HandleConnection(connection, cts.Token);
+}
+
+Log.Information("Server stopped!");
+
+async Task HandleConnection(ConnectionContext connection, CancellationToken cancellationToken)
+{
+    byte[]? buffer = null;
+
+    // using (connection) // This calls Dispose() and unpins the GCHandle!
+    try
     {
-        try
+        buffer = ArrayPool<byte>.Shared.Rent(4096);
+        var bytesRead = await connection.ReadAsync(buffer);
+
+        if (bytesRead > 0)
         {
-            await Task.Delay(1000, ct);
-        }
-        catch (OperationCanceledException)
+            // Send minimal HTTP response
+            var response = "HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello, World!"u8.ToArray();
+            await connection.WriteAsync(response);
+        }        
+    }
+    finally
+    {
+        if (buffer is not null)
         {
-            break;
+            ArrayPool<byte>.Shared.Return(buffer);
         }
 
-        var elapsed = stopwatch.Elapsed.TotalSeconds;
-        // var (completed, failed, pending) = workerPool.GetStats();
-        // Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Handshakes: {completed} ok, {failed} fail, {pending} pending ({completed / elapsed:F2}/sec)");
+        connection.Dispose(); // closing the connection from server
     }
 }
 
