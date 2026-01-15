@@ -8,6 +8,7 @@ internal static partial class Libc
     public const int IPPROTO_TCP = 6;
     public const int TCP_NODELAY = 1;      // Disable Nagle's algorithm - send small packets immediately
     public const int TCP_QUICKACK = 12;    // Disable delayed ACKs
+    public const int TCP_DEFER_ACCEPT = 9; // Don't accept until client sends data (e.g., ClientHello)
 
     // Busy polling (trades CPU for latency)
     public const int SO_BUSY_POLL = 46;

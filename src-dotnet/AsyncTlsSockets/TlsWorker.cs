@@ -203,6 +203,11 @@ public unsafe class TlsWorker
         if (Libc.setsockopt(fd, Libc.SOL_SOCKET, Libc.SO_REUSEPORT, &optval, sizeof(int)) < 0)
             throw new Exception("Setsockopt SO_REUSEPORT failed");
 
+        // 3. TCP_DEFER_ACCEPT: Don't wake on accept until client sends data (ClientHello)
+        // Value is timeout in seconds - kernel will wait up to this long for data
+        int deferTimeout = 3;
+        Libc.setsockopt(fd, Libc.IPPROTO_TCP, Libc.TCP_DEFER_ACCEPT, &deferTimeout, sizeof(int));
+
         // 3. Set Non-Blocking (Required for Epoll)
         int flags = Libc.fcntl(fd, Libc.F_GETFL, 0);
         Libc.fcntl(fd, Libc.F_SETFL, flags | Libc.SOCK_NONBLOCK);
