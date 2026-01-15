@@ -6,6 +6,19 @@ internal static class NativeOpenSsl
 {
     // OpenSSL Error Codes
     public const int SSL_ERROR_NONE = 0;
+
+    // SSL_CTX_set_options flags
+    public const long SSL_OP_NO_COMPRESSION = 0x00020000L;           // Disable compression (~522KB/conn saved)
+    public const long SSL_OP_SINGLE_ECDH_USE = 0x00080000L;          // Fresh ECDH key per handshake
+    public const long SSL_OP_NO_CLIENT_RENEGOTIATION = 0x00001000L;  // Block client renegotiation (DoS protection)
+    public const long SSL_OP_IGNORE_UNEXPECTED_EOF = 0x00000080L;    // OpenSSL 3.0+: treat unexpected EOF as normal
+
+    // SSL_CTX_set_mode flags
+    public const long SSL_MODE_RELEASE_BUFFERS = 0x00000010L;        // Release buffers when idle (~34KB/conn saved)
+
+    // SSL_CTX_ctrl commands (SSL_CTX_set_mode and SSL_CTX_set_read_ahead are macros)
+    public const int SSL_CTRL_MODE = 33;
+    public const int SSL_CTRL_SET_READ_AHEAD = 41;
     public const int SSL_ERROR_SSL = 1;
     public const int SSL_ERROR_WANT_READ = 2;    // The "Wait and Retry" signal
     public const int SSL_ERROR_WANT_WRITE = 3;   // Socket buffer full signal
@@ -40,6 +53,20 @@ internal static class NativeOpenSsl
 
     [DllImport("libssl.so.3")]
     public static extern int SSL_CTX_check_private_key(IntPtr ctx);
+
+    [DllImport("libssl.so.3")]
+    public static extern long SSL_CTX_set_options(IntPtr ctx, long options);
+
+    // SSL_CTX_ctrl is the underlying function for SSL_CTX_set_mode and SSL_CTX_set_read_ahead macros
+    [DllImport("libssl.so.3")]
+    public static extern long SSL_CTX_ctrl(IntPtr ctx, int cmd, long larg, IntPtr parg);
+
+    // Wrapper methods to match the macro API
+    public static long SSL_CTX_set_mode(IntPtr ctx, long mode)
+        => SSL_CTX_ctrl(ctx, SSL_CTRL_MODE, mode, IntPtr.Zero);
+
+    public static long SSL_CTX_set_read_ahead(IntPtr ctx, int yes)
+        => SSL_CTX_ctrl(ctx, SSL_CTRL_SET_READ_AHEAD, yes, IntPtr.Zero);
 
     #endregion
 

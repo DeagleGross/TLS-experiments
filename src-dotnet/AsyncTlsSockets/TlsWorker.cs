@@ -163,6 +163,16 @@ public unsafe class TlsWorker
         if (NativeOpenSsl.SSL_CTX_check_private_key(_sslCtx) <= 0)
             throw new Exception("Private key does not match the certificate public key");
 
+        // 6. Performance & Security options
+        NativeOpenSsl.SSL_CTX_set_mode(_sslCtx, NativeOpenSsl.SSL_MODE_RELEASE_BUFFERS);  // ~34KB saved per idle connection
+        NativeOpenSsl.SSL_CTX_set_read_ahead(_sslCtx, 1);  // Buffer multiple TLS records for better throughput
+
+        NativeOpenSsl.SSL_CTX_set_options(_sslCtx,
+            NativeOpenSsl.SSL_OP_NO_COMPRESSION |           // ~522KB saved per connection, also mitigates CRIME attack
+            NativeOpenSsl.SSL_OP_SINGLE_ECDH_USE |          // Fresh ECDH key per handshake (security)
+            NativeOpenSsl.SSL_OP_NO_CLIENT_RENEGOTIATION |  // Block client-initiated renegotiation (DoS protection)
+            NativeOpenSsl.SSL_OP_IGNORE_UNEXPECTED_EOF);    // OpenSSL 3.0+: cleaner EOF handling
+
         Console.WriteLine("OpenSSL Context initialized successfully.");
     }
 
