@@ -98,31 +98,42 @@ public unsafe class TlsWorker
         }
     }
 
-    private void HandleAccept()
+    private unsafe void HandleAccept()
     {
-        int clientFd = Libc.accept4(_listenFd, IntPtr.Zero, IntPtr.Zero, 0x800); // SOCK_NONBLOCK
-        if (clientFd < 0) return;
+        // Multi-accept: accept all pending connections in one go (like nginx multi_accept)
+        while (true)
+        {
+            int clientFd = Libc.accept4(_listenFd, IntPtr.Zero, IntPtr.Zero, 0x800); // SOCK_NONBLOCK
+            if (clientFd < 0) break; // No more pending connections
 
-        IntPtr ssl = NativeOpenSsl.SSL_new(_sslCtx);
-        NativeOpenSsl.SSL_set_fd(ssl, clientFd);
-        NativeOpenSsl.SSL_set_accept_state(ssl);
+            // TCP_NODELAY: Disable Nagle's algorithm - send small handshake messages immediately
+            int optval = 1;
+            Libc.setsockopt(clientFd, Libc.IPPROTO_TCP, Libc.TCP_NODELAY, &optval, sizeof(int));
 
-        // Set write BIO buffer size to 16KB (matches nginx).
-        IntPtr wbio = NativeOpenSsl.SSL_get_wbio(ssl);
-        if (wbio != IntPtr.Zero)
-            NativeOpenSsl.BIO_set_write_buffer_size(wbio, 16384);
+            // TCP_QUICKACK: Disable delayed ACKs for faster handshake
+            Libc.setsockopt(clientFd, Libc.IPPROTO_TCP, Libc.TCP_QUICKACK, &optval, sizeof(int));
 
-        // Create the context and tell it who its 'parent' queue is
-        var context = new ConnectionContext(_epollFd, clientFd, ssl, _acceptQueue);
-        var connectionContextId = ConnectionRegistry.Register(context);
+            IntPtr ssl = NativeOpenSsl.SSL_new(_sslCtx);
+            NativeOpenSsl.SSL_set_fd(ssl, clientFd);
+            NativeOpenSsl.SSL_set_accept_state(ssl);
 
-        // Register in Worker's local Epoll
-        RegisterInEpoll(clientFd, connectionContextId);
+            // Set write BIO buffer size to 16KB (matches nginx).
+            IntPtr wbio = NativeOpenSsl.SSL_get_wbio(ssl);
+            if (wbio != IntPtr.Zero)
+                NativeOpenSsl.BIO_set_write_buffer_size(wbio, 16384);
 
-        Log.Debug("[TlsWorker {_id}] Accepted new connection on FD {Fd}", _id, clientFd);
+            // Create the context and tell it who its 'parent' queue is
+            var context = new ConnectionContext(_epollFd, clientFd, ssl, _acceptQueue);
+            var connectionContextId = ConnectionRegistry.Register(context);
 
-        // Kick off the handshake
-        context.DoHandshake();
+            // Register in Worker's local Epoll
+            RegisterInEpoll(clientFd, connectionContextId);
+
+            Log.Debug("[TlsWorker {_id}] Accepted new connection on FD {Fd}", _id, clientFd);
+
+            // Kick off the handshake
+            context.DoHandshake();
+        }
     }
 
     private void RegisterInEpoll(int clientFd, long connectionContextId)
