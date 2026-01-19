@@ -1,6 +1,4 @@
 using DemoSemiUnmanagedSocket.Interop;
-using DemoSemiUnmanagedSocket.Ssl.Requests;
-using System.Collections.Concurrent;
 using System.Net.Sockets;
 
 namespace DemoSemiUnmanagedSocket.Ssl;
@@ -13,9 +11,9 @@ namespace DemoSemiUnmanagedSocket.Ssl;
 /// Architecture (similar to nginx):
 /// - Fixed number of worker threads (default 4)
 /// - Each worker has its own epoll instance
-/// - Single shared queue - workers pick up work when free
-/// - Workers run a synchronous loop: epoll_wait → ssl_do_handshake
-/// - App threads submit handshake requests and await completion
+/// - Listen socket added to each worker's epoll with EPOLLEXCLUSIVE
+/// - Workers accept connections directly in their epoll loop
+/// - Workers run a synchronous loop: epoll_wait → accept/ssl_do_handshake
 /// 
 /// This avoids async overhead and keeps TLS work on dedicated threads.
 /// </summary>
@@ -27,7 +25,6 @@ internal sealed class SslWorkerPool : IDisposable
     private readonly SslWorker[] _workers;
     private readonly int _workerCount;
     private readonly SslContext _sslContext;
-    private readonly ConcurrentQueue<HandshakeRequest> _sharedQueue = new(); // Shared across all workers
     private bool _disposed;
 
     /// <summary>
@@ -51,29 +48,41 @@ internal sealed class SslWorkerPool : IDisposable
         _workerCount = workerCount;
         _workers = new SslWorker[workerCount];
 
-        // Create and start worker threads - all share the same queue
+        // Create worker threads (don't start yet - need listen fd first)
         for (int i = 0; i < workerCount; i++)
         {
-            _workers[i] = new SslWorker(i, sslContext, _sharedQueue);
-            _workers[i].Start();
+            _workers[i] = new SslWorker(i, sslContext);
         }
 
-        Console.WriteLine($"[SslWorkerPool] Started {workerCount} workers with shared queue");
+        Console.WriteLine($"[SslWorkerPool] Created {workerCount} workers");
     }
 
     /// <summary>
-    /// Submit a socket for TLS handshake.
-    /// Returns a task that completes when handshake is done.
-    /// Any free worker will pick it up.
+    /// Set the listen socket and start workers.
+    /// Workers will add the listen fd to their epoll with EPOLLEXCLUSIVE.
     /// </summary>
-    public Task<HandshakeResult> SubmitHandshakeAsync(Socket clientSocket)
+    public void SetListenSocketAndStart(Socket listenSocket)
     {
-        var request = new HandshakeRequest(clientSocket);
-        
-        // Just enqueue - any worker will pick it up when free
-        _sharedQueue.Enqueue(request);
-        
-        return request.Completion.Task;
+        // Get the raw file descriptor from the managed Socket
+        int listenFd = GetSocketFd(listenSocket);
+        Console.WriteLine($"[SslWorkerPool] Listen fd: {listenFd}");
+
+        // Start workers with the listen fd
+        for (int i = 0; i < _workerCount; i++)
+        {
+            _workers[i].Start(listenFd);
+        }
+
+        Console.WriteLine($"[SslWorkerPool] Started {_workerCount} workers with listen fd in epoll");
+    }
+
+    /// <summary>
+    /// Get the native file descriptor from a managed Socket.
+    /// </summary>
+    private static int GetSocketFd(Socket socket)
+    {
+        // Socket.Handle returns nint (the raw fd) in modern .NET
+        return (int)socket.Handle;
     }
 
     /// <summary>
@@ -89,8 +98,6 @@ internal sealed class SslWorkerPool : IDisposable
             failed += stats.failed;
             pending += stats.pending;
         }
-        // Add queue size to pending
-        pending += _sharedQueue.Count;
         return (completed, failed, pending);
     }
 
