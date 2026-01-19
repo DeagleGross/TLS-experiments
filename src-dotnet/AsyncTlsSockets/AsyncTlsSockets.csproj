@@ -13,6 +13,11 @@
     <PackageReference Include="Serilog.Sinks.Console" Version="6.1.1" />
   </ItemGroup>
 
-
+  <ItemGroup>
+    <!-- Certs are mounted at runtime in Docker, only copy for local dev if they exist -->
+    <None Include="../../certs/server-p384.crt" CopyToOutputDirectory="PreserveNewest" Link="certs/server-p384.crt" Condition="Exists('../../certs/server-p384.crt')" />
+    <None Include="../../certs/server-p384.key" CopyToOutputDirectory="PreserveNewest" Link="certs/server-p384.key" Condition="Exists('../../certs/server-p384.key')" />
+    <None Include="native/libdemo_native.so" CopyToOutputDirectory="PreserveNewest" Link="libdemo_native.so" Condition="Exists('native/libdemo_native.so')" />
+  </ItemGroup>
 
 </Project>
