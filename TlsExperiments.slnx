@@ -1,5 +1,7 @@
 <Solution>
   <Folder Name="/certs/">
+    <File Path="certs/server-p256.crt" />
+    <File Path="certs/server-p256.key" />
     <File Path="certs/server-p384.crt" />
     <File Path="certs/server-p384.key" />
     <File Path="certs/server.crt" />

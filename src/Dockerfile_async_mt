@@ -35,7 +35,10 @@ COPY --from=build /src/tls_handshake_server_async_mt .
 # Expose default port
 EXPOSE 6001
 
-# Run the server
-# Usage: docker run -v ./certs:/app/certs -p 6001:6001 <image> [port] [cert] [key]
-ENTRYPOINT ["./tls_handshake_server_async_mt"]
-CMD ["6001", "certs/server-p384.crt", "certs/server-p384.key"]
+# Environment variable for certificate curve (p256, p384)
+ENV CURVE=p384
+ENV PORT=6001
+
+# Run the server with curve from environment variable
+# Usage: CURVE=p256 docker run -v ./certs:/app/certs -p 6001:6001 <image>
+CMD ["sh", "-c", "./tls_handshake_server_async_mt ${PORT} ${CURVE}"]

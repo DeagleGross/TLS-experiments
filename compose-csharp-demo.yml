@@ -12,6 +12,9 @@ services:
     cpuset: "0-3"
     volumes:
       - ./certs:/app/certs:ro
-    # Override command if needed:
-    # command: ["5007", "certs/server-p384.crt", "certs/server-p384.key"]
+    environment:
+      # Certificate curve: p256 (fastest), p384 (default, heaviest)
+      - CURVE=${CURVE:-p384}
+      - PORT=5007
+      - WORKERS=4
     restart: unless-stopped

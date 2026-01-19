@@ -26,11 +26,15 @@ class Program
         Console.WriteLine("No thread blocking - truly async!");
         Console.WriteLine();
 
+        // Parse curve argument (--curve p256|p384)
+        string? curve = GetCurveArgument(args);
+        
         // Find certificate paths
-        var (certPath, keyPath) = FindCertificatePaths();
+        var (certPath, keyPath) = FindCertificatePaths(curve);
         if (certPath == null || keyPath == null)
         {
             Console.WriteLine("ERROR: No certificate files found!");
+            PrintUsage();
             return;
         }
 
@@ -168,13 +172,27 @@ class Program
         }
     }
 
-    private static (string? certPath, string? keyPath) FindCertificatePaths()
+    private static (string? certPath, string? keyPath) FindCertificatePaths(string? curve = null)
     {
         var basePaths = new[]
         {
             Path.Combine("certs"),  // Docker: /app/certs
             Path.Combine("..", "..", "certs")  // Development
         };
+
+        // If curve is specified, look for that specific cert
+        if (curve != null)
+        {
+            foreach (var basePath in basePaths)
+            {
+                var certPath = Path.Combine(basePath, $"server-{curve}.crt");
+                var keyPath = Path.Combine(basePath, $"server-{curve}.key");
+
+                if (File.Exists(certPath) && File.Exists(keyPath))
+                    return (certPath, keyPath);
+            }
+            Console.WriteLine($"WARNING: Certificate for curve '{curve}' not found, falling back to default");
+        }
 
         foreach (var basePath in basePaths)
         {
@@ -193,5 +211,37 @@ class Program
         }
 
         return (null, null);
+    }
+
+    private static string? GetCurveArgument(string[] args)
+    {
+        for (int i = 0; i < args.Length; i++)
+        {
+            if (args[i] == "--curve" && i + 1 < args.Length)
+            {
+                var curve = args[i + 1].ToLower();
+                if (curve == "p256" || curve == "p384")
+                    return curve;
+                Console.WriteLine($"Unknown curve: {curve}. Supported: p256, p384");
+            }
+            // Also support positional argument
+            if (args[i] == "p256" || args[i] == "p384")
+                return args[i].ToLower();
+        }
+        return null;
+    }
+
+    private static void PrintUsage()
+    {
+        Console.WriteLine();
+        Console.WriteLine("Usage: dotnet run -- [--curve <curve>]");
+        Console.WriteLine();
+        Console.WriteLine("Curve options (lighter to heavier):");
+        Console.WriteLine("  p256   - ECDSA P-256 (fastest)");
+        Console.WriteLine("  p384   - ECDSA P-384 (default, most CPU intensive)");
+        Console.WriteLine();
+        Console.WriteLine("Examples:");
+        Console.WriteLine("  dotnet run -- --curve p256");
+        Console.WriteLine("  dotnet run -- p256");
     }
 }

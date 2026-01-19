@@ -3,6 +3,49 @@
 This repo is dedicated to TLS experiments to understand the best potential way to work with it on UNIX systems;
 The goal is to determine why nginx is the best server to perform TLS handshakes performantly, compared to Kestrel for example.
 
+## Certificate Generation
+
+Generate certificates with different elliptic curves for benchmarking:
+
+```bash
+# Generate all certificates (p256, p384)
+./scripts/generate-certs.sh
+
+# Or run from Docker on Windows
+docker run --rm -v ${PWD}:/work -w /work alpine:latest sh -c "apk add openssl && ./scripts/generate-certs.sh"
+```
+
+**Available curves (lighter to heavier):**
+| Curve | Key Type | CPU Cost | Notes |
+|-------|----------|----------|-------|
+| `p256` | ECDSA P-256 (secp256r1) | Fastest | Most common, good balance |
+| `p384` | ECDSA P-384 (secp384r1) | Heaviest | Higher security margin |
+
+## Running with Different Curves
+
+### C Programs
+```bash
+# Using curve name
+./bin/tls_handshake_server_async_mt 6001 p256
+./bin/tls_handshake_server_async_mt 6001 p384
+
+# Using explicit cert paths (backwards compatible)
+./bin/tls_handshake_server_async_mt 6001 certs/server-p256.crt certs/server-p256.key
+```
+
+### C# Programs
+```bash
+# Using --curve flag
+dotnet run -- --curve p256
+dotnet run -- --curve p384
+
+# Or positional argument
+dotnet run -- p256
+
+# With other arguments
+dotnet run -- 5008 16 --curve p256  # port 5008, 16 workers, P-256 cert
+```
+
 ## C apps runs
 
 In [src](./src/) you can find different C server apps which simulate different architectures and showcase different usage of TLS handshake.

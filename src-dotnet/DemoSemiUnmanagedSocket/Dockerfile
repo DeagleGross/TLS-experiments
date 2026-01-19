@@ -45,4 +45,10 @@ COPY --from=build /app/publish ./
 
 EXPOSE 5007
 
-ENTRYPOINT ["dotnet", "DemoSemiUnmanagedSocket.dll"]
+# Environment variable for certificate curve (p256, p384)
+ENV CURVE=p384
+ENV PORT=5007
+ENV WORKERS=4
+
+# Run the application with curve from environment variable
+CMD ["sh", "-c", "dotnet DemoSemiUnmanagedSocket.dll ${PORT} ${WORKERS} --curve ${CURVE}"]
