@@ -3,19 +3,9 @@
 This repo is dedicated to TLS experiments to understand the best potential way to work with it on UNIX systems;
 The goal is to determine why nginx is the best server to perform TLS handshakes performantly, compared to Kestrel for example.
 
-## Certificate Generation
+## Certificates
 
-Generate certificates with different elliptic curves for benchmarking:
-
-```bash
-# Generate all certificates (p256, p384)
-./scripts/generate-certs.sh
-
-# Or run from Docker on Windows
-docker run --rm -v ${PWD}:/work -w /work alpine:latest sh -c "apk add openssl && ./scripts/generate-certs.sh"
-```
-
-**Available curves (lighter to heavier):**
+**Available curves:**
 | Curve | Key Type | CPU Cost | Notes |
 |-------|----------|----------|-------|
 | `p256` | ECDSA P-256 (secp256r1) | Fastest | Most common, good balance |
@@ -28,174 +18,29 @@ docker run --rm -v ${PWD}:/work -w /work alpine:latest sh -c "apk add openssl &&
 # Using curve name
 ./bin/tls_handshake_server_async_mt 6001 p256
 ./bin/tls_handshake_server_async_mt 6001 p384
-
-# Using explicit cert paths (backwards compatible)
-./bin/tls_handshake_server_async_mt 6001 certs/server-p256.crt certs/server-p256.key
 ```
 
 ### C# Programs
 ```bash
 # Using --curve flag
-dotnet run -- --curve p256
-dotnet run -- --curve p384
-
-# Or positional argument
-dotnet run -- p256
-
-# With other arguments
-dotnet run -- 5008 16 --curve p256  # port 5008, 16 workers, P-256 cert
+dotnet run --curve p256
+dotnet run --curve p384
 ```
 
-## C apps runs
+### Docker compose
+
+In order to simulate running app in the constrained environment, you can run servers via docker-compose which restrict cpuset: `cpuset: "0-3"`
+```bash
+# use $env:CURVE="p256" or $env:CURVE="p384" to control which cert will be used
+$env:CURVE="p256"; docker compose -f compose-c-async-mt.yml up --build
+```
+
+## C servers
 
 In [src](./src/) you can find different C server apps which simulate different architectures and showcase different usage of TLS handshake.
-Here is a brief comparison + results i get on my WSL:
+[See architectural differences and results](./src/README.md)
 
-1) [Single-Threaded Async](./src/tls_handshake_server.c)
+## CSharp servers
 
-It uses a single CPU core, and can't do parallel SSL operations.
-
-On benchmark with wrk got these results:
-```
-Duration: 10s, Threads: 64, Connections: 500
-Requests/sec:   1823.33
-```
-
-```
-┌─────────────────────────────────────┐
-│  Main Thread (single thread)        │
-│                                     │
-│  while (running) {                  │
-│    epoll_wait() ← SLEEPS HERE       │
-│    for each ready socket:           │
-│      if (listen_fd):                │
-│        accept() + SSL_new()         │
-│        epoll_ctl(ADD)               │
-│      else:                          │
-│        SSL_do_handshake()           │
-│        if (WANT_READ/WRITE):        │
-│          epoll_ctl(MOD) ← change    │
-│                           what we   │
-│                           watch for │
-│  }                                  │
-└─────────────────────────────────────┘
-```
-
-2) [Multi-Threaded Sync (thread per `accept()`)](./src/tls_handshake_server_sync.c)
-
-This one is closer to .NET implementation, because Kestrel does the following:
-```csharp
-await using var sslStream = new SslStream(networkStream);
-await sslStream.AuthenticateAsServerAsync(serverOptions);
-```
-and under the hood `SslStream` is calling [`Ssl.SslDoHandshake()`](https://github.com/dotnet/runtime/blob/0fe3eb128bc11a78d9685075d2a787dd2740fc2d/src/libraries/Common/src/Interop/Unix/System.Security.Cryptography.Native/Interop.OpenSsl.cs#L689) which is interop and it **blocks** thread here waiting for the whole SSL handshake to be performed.
-
-On benchmark with wrk got these results:
-```
-Duration: 10s, Threads: 64, Connections: 500
-Requests/sec:   4688.96
-```
-
-```
-┌──────────────────┐       ┌──────────────────┐       ┌──────────────────┐
-│ Main Thread      │       │ Worker Thread 1  │       │ Worker Thread 2  │
-│                  │       │                  │       │                  │
-│ while (running): │───┬──>│ SSL_do_handshake │       │ SSL_do_handshake │
-│   accept()       │   │   │       ↓          │       │       ↓          │
-│   pthread_create─┼───┤   │    BLOCKS HERE   │       │    BLOCKS HERE   │
-│                  │   │   │       ↓          │       │       ↓          │
-└──────────────────┘   │   │ Send response    │       │ Send response    │
-                       │   │ close()          │       │ close()          │
-                       │   │ thread exits     │       │ thread exits     │
-                       │   └──────────────────┘       └──────────────────┘
-                       │
-                       └──>│ Worker Thread 3  │  ... up to 1000 threads
-                           │ SSL_do_handshake │
-                           │    BLOCKS HERE   │
-                           └──────────────────┘
-```
-
-3) [Thread Pool with Producer-Consumer Queue](./src/tls_handshake_server_sync_pool.c)
-
-This is an attempt to scale sync version somehow, but it failed.
-Mostly because every operation is locked on the queue, and multiple blocks are encountered along a single attempt to work with the queue
-
-On benchmark with wrk got these results:
-```
-Duration: 10s, Threads: 64, Connections: 500
-Requests/sec:   383.56
-```
-
-```
-┌─────────────────┐         ┌──────────────────────┐
-│  Main Thread    │         │  Shared Queue        │
-│  (Producer)     │         │  (MUTEX PROTECTED)   │
-│                 │         │                      │
-│ while (running):│         │  [fd1] [fd2] [fd3]   │
-│   accept()  ────┼────────>│         ↓            │
-│   queue_push()  │  LOCK   │    Queue Size: 1000  │
-│                 │  MUTEX  │         ↓            │
-└─────────────────┘         └──────────────────────┘
-                                      ↓
-                            ┌─────────┴──────────┬─────────────┬─────────────┐
-                            ↓                    ↓             ↓             ↓
-                     ┌─────────────┐      ┌─────────────┐  ┌─────────────┐  ┌─────────────┐
-                     │ Worker 0    │      │ Worker 1    │  │ Worker 2    │  │ Worker 3    │
-                     │ (Consumer)  │      │ (Consumer)  │  │ (Consumer)  │  │ (Consumer)  │
-                     │             │      │             │  │             │  │             │
-                     │ queue_pop() │      │ queue_pop() │  │ queue_pop() │  │ queue_pop() │
-                     │   ↓ LOCK    │      │   ↓ LOCK    │  │   ↓ LOCK    │  │   ↓ LOCK    │
-                     │   ↓ MUTEX   │      │   ↓ MUTEX   │  │   ↓ MUTEX   │  │   ↓ MUTEX   │
-                     │ SSL_do_     │      │ SSL_do_     │  │ SSL_do_     │  │ SSL_do_     │
-                     │ handshake() │      │ handshake() │  │ handshake() │  │ handshake() │
-                     │   BLOCKS    │      │   BLOCKS    │  │   BLOCKS    │  │   BLOCKS    │
-                     └─────────────┘      └─────────────┘  └─────────────┘  └─────────────┘
-```
-
-4) [Multi-Threaded Async (nginx-style)](/src/tls_handshake_server_async_mt.c)
-
-This is a winner based on the RPS:
-```
-Duration: 10s, Threads: 64, Connections: 500
-Requests/sec:  6506.50
-```
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        Listen Socket (8443)                          │
-│                     SO_REUSEPORT enabled                             │
-│     Kernel distributes incoming connections across workers           │
-└────────┬────────────┬────────────┬────────────┬─────────────────────┘
-         │            │            │            │
-         ↓            ↓            ↓            ↓
-  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐
-  │  Worker 0   │ │  Worker 1   │ │  Worker 2   │ │  Worker 3   │
-  │             │ │             │ │             │ │             │
-  │ epoll_fd=5  │ │ epoll_fd=6  │ │ epoll_fd=7  │ │ epoll_fd=8  │
-  │             │ │             │ │             │ │             │
-  │ while(1):   │ │ while(1):   │ │ while(1):   │ │ while(1):   │
-  │   epoll_    │ │   epoll_    │ │   epoll_    │ │   epoll_    │
-  │   wait()    │ │   wait()    │ │   wait()    │ │   wait()    │
-  │   ↓ SLEEP   │ │   ↓ SLEEP   │ │   ↓ SLEEP   │ │   ↓ SLEEP   │
-  │   ↓ (0%CPU) │ │   ↓ (0%CPU) │ │   ↓ (0%CPU) │ │   ↓ (0%CPU) │
-  │   ↓         │ │   ↓         │ │   ↓         │ │   ↓         │
-  │   accept()  │ │   accept()  │ │   accept()  │ │   accept()  │
-  │   SSL_do_   │ │   SSL_do_   │ │   SSL_do_   │ │   SSL_do_   │
-  │   handshake │ │   handshake │ │   handshake │ │   handshake │
-  │             │ │             │ │             │ │             │
-  │ Handles:    │ │ Handles:    │ │ Handles:    │ │ Handles:    │
-  │ 125 conns   │ │ 125 conns   │ │ 125 conns   │ │ 125 conns   │
-  └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘
-```
-
-## Dotnet apps
-
-In order to verify idea works, I built the dotnet apps that use the existing `SslStream` with `AuthenticateAsServerAsync()` API, or the async-ssl code (does not exist yet).
-
-To run them:
-- `cd` to repo root
-- `docker-compose --file <yml>.yml up --build` e.g.
-  ```
-  docker-compose --file .\compose-asyncssl.yml up --build
-  ```
-- do test via wrk `wrk -t12 -c400 -d30s https://localhost:5001`
+In [src-dotnet](./src-dotnet/) you can find different CSharp server apps which simulate different architectures and showcase different usage of TLS handshake.
+[See architectural differences and results](./src-dotnet/README.md).
