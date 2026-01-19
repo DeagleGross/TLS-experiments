@@ -21,8 +21,11 @@ class Program
         Console.WriteLine("=== Minimal SslStream Server ===");
         Console.WriteLine();
 
+        // Parse curve argument (--curve p256|p384)
+        string? curve = GetCurveArgument(args);
+        
         // Load existing certificate
-        var certificate = LoadCertificate();
+        var certificate = LoadCertificate(curve);
         Console.WriteLine($"Certificate: {certificate.Subject}");
         Console.WriteLine($"Thumbprint: {certificate.Thumbprint}");
         Console.WriteLine();
@@ -150,7 +153,7 @@ class Program
         }
     }
 
-    private static X509Certificate2 LoadCertificate()
+    private static X509Certificate2 LoadCertificate(string? curve = null)
     {
         // Try to load from certs directory
         // In Docker: /app/certs
@@ -160,6 +163,23 @@ class Program
             Path.Combine("certs"),  // Docker: /app/certs
             Path.Combine("..", "..", "certs")  // Development
         };
+
+        // If curve is specified, look for that specific cert
+        if (curve != null)
+        {
+            foreach (var basePath in basePaths)
+            {
+                var certPath = Path.Combine(basePath, $"server-{curve}.crt");
+                var keyPath = Path.Combine(basePath, $"server-{curve}.key");
+
+                if (File.Exists(certPath) && File.Exists(keyPath))
+                {
+                    Console.WriteLine($"Loading certificate from: {certPath}");
+                    return LoadCertificateFromPemFiles(certPath, keyPath);
+                }
+            }
+            Console.WriteLine($"WARNING: Certificate for curve '{curve}' not found, falling back to default");
+        }
 
         foreach (var basePath in basePaths)
         {
@@ -184,6 +204,24 @@ class Program
 
         Console.WriteLine("No existing certificates found, generating new one...");
         return GenerateSelfSignedCertificate();
+    }
+
+    private static string? GetCurveArgument(string[] args)
+    {
+        for (int i = 0; i < args.Length; i++)
+        {
+            if (args[i] == "--curve" && i + 1 < args.Length)
+            {
+                var curve = args[i + 1].ToLower();
+                if (curve == "p256" || curve == "p384")
+                    return curve;
+                Console.WriteLine($"Unknown curve: {curve}. Supported: p256, p384");
+            }
+            // Also support positional argument
+            if (args[i] == "p256" || args[i] == "p384")
+                return args[i].ToLower();
+        }
+        return null;
     }
 
     private static X509Certificate2 LoadCertificateFromPemFiles(string certPath, string keyPath)

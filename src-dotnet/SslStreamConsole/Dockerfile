@@ -35,5 +35,8 @@ COPY --from=build /app/publish .
 # Expose port
 EXPOSE 5001
 
-# Run the application
-ENTRYPOINT ["dotnet", "SslStreamConsole.dll"]
+# Environment variable for certificate curve (p256, p384)
+ENV CURVE=p384
+
+# Run the application with curve from environment variable
+CMD ["sh", "-c", "dotnet SslStreamConsole.dll --curve ${CURVE}"]

@@ -14,6 +14,8 @@ services:
       - ./certs:/app/certs:ro
     environment:
       - DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false
+      # Certificate curve: p256 (fastest), p384 (default, heaviest)
+      - CURVE=${CURVE:-p384}
     restart: unless-stopped
     networks:
       - tls-experiments

@@ -45,4 +45,10 @@ COPY --from=build /app/publish ./
 
 EXPOSE 5008
 
-ENTRYPOINT ["dotnet", "AsyncTlsSockets.dll"]
+# Environment variable for certificate curve (p256, p384)
+ENV CURVE=p384
+ENV PORT=5008
+ENV WORKERS=16
+
+# Run the application with curve from environment variable
+CMD ["sh", "-c", "dotnet AsyncTlsSockets.dll ${PORT} ${WORKERS} --curve ${CURVE}"]

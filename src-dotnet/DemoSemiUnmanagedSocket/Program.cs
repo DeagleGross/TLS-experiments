@@ -27,19 +27,22 @@ class Program
         Console.WriteLine();
 
         // Parse arguments
-        int port = args.Length > 0 ? int.Parse(args[0]) : 5007;
-        int workerCount = args.Length > 1 ? int.Parse(args[1]) : WorkerCount;
+        int port = GetPortArgument(args) ?? 5007;
+        int workerCount = GetWorkerCountArgument(args) ?? WorkerCount;
+        string? curve = GetCurveArgument(args);
         
         // Find certificate paths
-        var (certPath, keyPath) = FindCertificatePaths();
+        var (certPath, keyPath) = FindCertificatePaths(curve);
         if (certPath == null || keyPath == null)
         {
             Console.WriteLine("ERROR: No certificate files found!");
+            PrintUsage();
             return;
         }
 
         Console.WriteLine($"Port: {port}");
         Console.WriteLine($"Workers: {workerCount}");
+        if (curve != null) Console.WriteLine($"Curve: {curve}");
         Console.WriteLine($"Cert: {certPath}");
         Console.WriteLine($"Key: {keyPath}");
         Console.WriteLine();
@@ -147,13 +150,27 @@ class Program
         Console.WriteLine("========================");
     }
 
-    private static (string? certPath, string? keyPath) FindCertificatePaths()
+    private static (string? certPath, string? keyPath) FindCertificatePaths(string? curve = null)
     {
         var basePaths = new[]
         {
             Path.Combine("certs"),
             Path.Combine("..", "..", "certs")
         };
+
+        // If curve is specified, look for that specific cert
+        if (curve != null)
+        {
+            foreach (var basePath in basePaths)
+            {
+                var certPath = Path.Combine(basePath, $"server-{curve}.crt");
+                var keyPath = Path.Combine(basePath, $"server-{curve}.key");
+
+                if (File.Exists(certPath) && File.Exists(keyPath))
+                    return (certPath, keyPath);
+            }
+            Console.WriteLine($"WARNING: Certificate for curve '{curve}' not found, falling back to default");
+        }
 
         foreach (var basePath in basePaths)
         {
@@ -171,5 +188,70 @@ class Program
         }
 
         return (null, null);
+    }
+
+    private static int? GetPortArgument(string[] args)
+    {
+        for (int i = 0; i < args.Length; i++)
+        {
+            if (args[i] == "--port" && i + 1 < args.Length && int.TryParse(args[i + 1], out var port))
+                return port;
+            // First positional number that's likely a port (> 1000)
+            if (int.TryParse(args[i], out var p) && p > 1000 && args[i] != "p256" && args[i] != "p384")
+                return p;
+        }
+        return null;
+    }
+
+    private static int? GetWorkerCountArgument(string[] args)
+    {
+        for (int i = 0; i < args.Length; i++)
+        {
+            if (args[i] == "--workers" && i + 1 < args.Length && int.TryParse(args[i + 1], out var workers))
+                return workers;
+        }
+        // Second positional number (small, likely worker count)
+        int posCount = 0;
+        for (int i = 0; i < args.Length; i++)
+        {
+            if (int.TryParse(args[i], out var n) && args[i] != "p256" && args[i] != "p384")
+            {
+                posCount++;
+                if (posCount == 2) return n;
+            }
+        }
+        return null;
+    }
+
+    private static string? GetCurveArgument(string[] args)
+    {
+        for (int i = 0; i < args.Length; i++)
+        {
+            if (args[i] == "--curve" && i + 1 < args.Length)
+            {
+                var curve = args[i + 1].ToLower();
+                if (curve == "p256" || curve == "p384")
+                    return curve;
+                Console.WriteLine($"Unknown curve: {curve}. Supported: p256, p384");
+            }
+            // Also support positional argument
+            if (args[i] == "p256" || args[i] == "p384")
+                return args[i].ToLower();
+        }
+        return null;
+    }
+
+    private static void PrintUsage()
+    {
+        Console.WriteLine();
+        Console.WriteLine("Usage: dotnet run -- [port] [workers] [--curve <curve>]");
+        Console.WriteLine();
+        Console.WriteLine("Curve options (lighter to heavier):");
+        Console.WriteLine("  p256   - ECDSA P-256 (fastest)");
+        Console.WriteLine("  p384   - ECDSA P-384 (default, most CPU intensive)");
+        Console.WriteLine();
+        Console.WriteLine("Examples:");
+        Console.WriteLine("  dotnet run -- 5007 4 --curve p256");
+        Console.WriteLine("  dotnet run -- --curve p384");
     }
 }

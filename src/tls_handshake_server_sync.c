@@ -155,17 +155,65 @@ cleanup:
     return NULL;
 }
 
+// Resolve curve name to certificate paths
+// Supported curves: p256, p384 (default)
+void resolve_curve_paths(const char *curve, const char **cert_file, const char **key_file) {
+    static char cert_path[256];
+    static char key_path[256];
+    
+    if (strcmp(curve, "p256") == 0) {
+        snprintf(cert_path, sizeof(cert_path), "certs/server-p256.crt");
+        snprintf(key_path, sizeof(key_path), "certs/server-p256.key");
+    } else if (strcmp(curve, "p384") == 0) {
+        snprintf(cert_path, sizeof(cert_path), "certs/server-p384.crt");
+        snprintf(key_path, sizeof(key_path), "certs/server-p384.key");
+    } else {
+        fprintf(stderr, "Unknown curve: %s. Supported: p256, p384\n", curve);
+        exit(1);
+    }
+    
+    *cert_file = cert_path;
+    *key_file = key_path;
+}
+
+void print_usage(const char *program) {
+    printf("Usage: %s [port] [curve|cert_path] [key_path]\n", program);
+    printf("\nCurve options (lighter to heavier):\n");
+    printf("  p256   - ECDSA P-256 (fastest)\n");
+    printf("  p384   - ECDSA P-384 (default, most CPU intensive)\n");
+    printf("\nExamples:\n");
+    printf("  %s 8443 p256                    # Use P-256 cert\n", program);
+    printf("  %s 8443 certs/my.crt certs/my.key  # Use custom cert\n", program);
+}
+
 int main(int argc, char *argv[]) {
     int port = 8443;
     const char *cert_file = "certs/server-p384.crt";
     const char *key_file = "certs/server-p384.key";
+    const char *curve = NULL;
     
-    if (argc >= 2) port = atoi(argv[1]);
-    if (argc >= 3) cert_file = argv[2];
-    if (argc >= 4) key_file = argv[3];
+    if (argc >= 2) {
+        if (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0) {
+            print_usage(argv[0]);
+            return 0;
+        }
+        port = atoi(argv[1]);
+    }
+    
+    // Check if arg[2] is a curve name or a file path
+    if (argc >= 3) {
+        if (strcmp(argv[2], "p256") == 0 || strcmp(argv[2], "p384") == 0) {
+            curve = argv[2];
+            resolve_curve_paths(curve, &cert_file, &key_file);
+        } else {
+            cert_file = argv[2];
+            if (argc >= 4) key_file = argv[3];
+        }
+    }
     
     printf("SYNCHRONOUS TLS Handshake Server\n");
     printf("Port: %d\n", port);
+    if (curve) printf("Curve: %s\n", curve);
     printf("Cert: %s\n", cert_file);
     printf("Key: %s\n", key_file);
     printf("Mode: BLOCKING (one thread per connection)\n");
