@@ -1,5 +1,5 @@
 # Docker Compose for TLS Handshake Server (Async Multi-Threaded C Implementation)
-# Run with: docker compose -f compose-ssl-async-mt.yml up --build
+# Run with: docker compose -f compose-csharp-demo.yml up --build
 
 services:
   tls-server-demo-semiunmanaged-socket:

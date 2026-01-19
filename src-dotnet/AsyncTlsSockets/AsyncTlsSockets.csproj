@@ -5,12 +5,14 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+	<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
-    <None Include="../../certs/server-p384.crt" CopyToOutputDirectory="PreserveNewest" Link="certs/server-p384.crt" />
-    <None Include="../../certs/server-p384.key" CopyToOutputDirectory="PreserveNewest" Link="certs/server-p384.key" />
+    <PackageReference Include="Serilog" Version="4.3.0" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="6.1.1" />
   </ItemGroup>
+
+
 
 </Project>

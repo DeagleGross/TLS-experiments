@@ -1,0 +1,37 @@
+using System.Runtime.InteropServices;
+
+namespace AsyncTlsSockets;
+
+internal static partial class Libc
+{
+    public const int SOL_SOCKET = 1;
+    public const int SO_REUSEPORT = 15;
+    public const int AF_INET = 2;
+    public const int SOCK_STREAM = 1;
+    public const int F_GETFL = 3;
+    public const int F_SETFL = 4;
+    public const int SOCK_NONBLOCK = 0x800; // 0x800 is the value for SOCK_NONBLOCK on Linux x86_64
+
+    [LibraryImport("libc", SetLastError = true)]
+    public static partial int accept4(int sockfd, IntPtr addr, IntPtr addrlen, int flags);
+
+    [LibraryImport("libc", SetLastError = true)]
+    public static partial int close(int fd);
+
+    // CPU affinity - pin thread to specific core(s)
+    [LibraryImport("libc", SetLastError = true)]
+    public static unsafe partial int sched_setaffinity(int pid, nuint cpusetsize, ulong* mask);
+
+    // Get number of CPUs
+    [LibraryImport("libc")]
+    public static partial int get_nprocs();
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public struct SockAddrIn
+{
+    public short sin_family;
+    public ushort sin_port;
+    public uint sin_addr;
+    public long sin_zero;
+}
