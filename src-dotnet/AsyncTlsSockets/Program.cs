@@ -58,14 +58,28 @@ Log.Information("Press Ctrl+C to stop...");
 
 controller.StartWorkers();
 
-while (!cts.IsCancellationRequested)
-{
-    // Awaits until ANY worker finishes a TLS handshake
-    var connection = await controller.AcceptAsync(cts.Token);
+try{
+    while (!cts.IsCancellationRequested)
+    {
+        // Awaits until ANY worker finishes a TLS handshake
+        var connection = await controller.AcceptAsync(cts.Token);
 
-    // Process the request in a background task so we can Accept the next one immediately
-    _ = HandleConnection(connection, cts.Token);
+        // Process the request in a background task so we can Accept the next one immediately
+        _ = HandleConnection(connection, cts.Token);
+    }
 }
+catch (OperationCanceledException)
+{
+    // Expected on shutdown
+}
+catch (Exception ex)
+{
+    Log.Error("Error in main loop: {Error}", ex);
+}
+
+
+var (totalMs, callCount, avgUs) = HandshakeMetrics.GetStats();
+Log.Information("SSL_do_handshake stats: {CallCount} calls, {TotalMs}ms total, {AvgUs:F2}µs avg per call", callCount, totalMs, avgUs);
 
 Log.Information("Server stopped!");
 

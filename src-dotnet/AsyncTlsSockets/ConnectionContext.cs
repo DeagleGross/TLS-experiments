@@ -1,8 +1,36 @@
 ﻿using Serilog;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading.Channels;
 
 namespace AsyncTlsSockets;
+
+public static class HandshakeMetrics
+{
+    private static long _totalTicks;
+    private static long _callCount;
+
+    public static void RecordDoHandshakeTime(long elapsedTicks)
+    {
+        Interlocked.Add(ref _totalTicks, elapsedTicks);
+        Interlocked.Increment(ref _callCount);
+    }
+
+    public static (long totalMs, long callCount, double avgUs) GetStats()
+    {
+        var ticks = Interlocked.Read(ref _totalTicks);
+        var count = Interlocked.Read(ref _callCount);
+        var totalMs = ticks * 1000 / Stopwatch.Frequency;
+        var avgUs = count > 0 ? (double)ticks * 1_000_000 / Stopwatch.Frequency / count : 0;
+        return (totalMs, count, avgUs);
+    }
+
+    public static void Reset()
+    {
+        Interlocked.Exchange(ref _totalTicks, 0);
+        Interlocked.Exchange(ref _callCount, 0);
+    }
+}
 
 public class ConnectionContext : IDisposable
 {
@@ -75,7 +103,10 @@ public class ConnectionContext : IDisposable
 
     public void DoHandshake()
     {
+        long start = Stopwatch.GetTimestamp();
         int result = NativeOpenSsl.SSL_do_handshake(_ssl);
+        long elapsed = Stopwatch.GetTimestamp() - start;
+        HandshakeMetrics.RecordDoHandshakeTime(elapsed);
 
         if (result == 1) // 1 means Handshake Success
         {
