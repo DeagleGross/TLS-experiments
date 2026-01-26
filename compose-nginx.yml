@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  nginx-tls:
+    container_name: nginx-tls
+    build:
+      context: ./src-servers/nginx
+      dockerfile: Dockerfile
+    ports:
+      - "8443:8443"
+    cpuset: "0-3"
+    volumes:
+      # Mount certs directory from repository root
+      - ./certs:/certs:ro
+    environment:
+      # Certificate curve: p256 (fastest), p384 (default, heaviest)
+      - CURVE=${CURVE:-p384}
+    restart: unless-stopped
+    networks:
+      - tls-experiments
+
+networks:
+  tls-experiments:
+    name: tls-experiments-network
