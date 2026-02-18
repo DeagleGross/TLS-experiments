@@ -1,0 +1,26 @@
+# Docker Compose for io_uring TLS Handshake Server
+# Run with: docker compose -f compose-csharp-uring.yml up --build
+#
+# Requires: Linux kernel >= 5.19 for multishot accept
+
+services:
+  tls-server-uring:
+    build:
+      context: ./src-dotnet/UringTlsSockets
+      dockerfile: Dockerfile
+    container_name: csharp-tls-server-uring
+    ports:
+      - "5009:5009"
+    cpuset: "0-3"
+    # io_uring syscalls (io_uring_setup, io_uring_enter, io_uring_register)
+    # are blocked by Docker's default seccomp profile
+    security_opt:
+      - seccomp:unconfined
+    volumes:
+      - ./certs:/app/certs:ro
+    environment:
+      # Certificate curve: p256 (fastest), p384 (default, heaviest)
+      - CURVE=${CURVE:-p384}
+      - PORT=5009
+      - WORKERS=4
+    restart: unless-stopped
