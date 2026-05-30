@@ -1,0 +1,33 @@
+# Dockerfile for TLS Handshake Server (Tuned Multi-Threaded Async - real C ceiling)
+FROM ubuntu:22.04 AS build
+
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+
+COPY tls_handshake_server_async_mt_tuned.c .
+
+# -D_GNU_SOURCE for accept4 and EPOLLEXCLUSIVE
+RUN gcc -O3 -D_GNU_SOURCE -o tls_handshake_server_async_mt_tuned \
+    tls_handshake_server_async_mt_tuned.c \
+    -lssl -lcrypto -lpthread
+
+FROM ubuntu:22.04 AS runtime
+
+RUN apt-get update && apt-get install -y \
+    libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --from=build /src/tls_handshake_server_async_mt_tuned .
+
+EXPOSE 6002
+
+ENV CURVE=p384
+ENV PORT=6002
+
+CMD ["sh", "-c", "./tls_handshake_server_async_mt_tuned ${PORT} ${CURVE}"]

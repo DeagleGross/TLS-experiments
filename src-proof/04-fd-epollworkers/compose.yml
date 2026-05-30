@@ -1,0 +1,16 @@
+services:
+  csharp-tls-server-fd-epollworkers:
+    build:
+      context: ../../src-dotnet/DemoSemiUnmanagedSocket
+      dockerfile: Dockerfile
+    container_name: csharp-tls-server-fd-epollworkers
+    ports:
+      - "5007:5007"
+    cpuset: "0-3"
+    volumes:
+      - ../../certs:/app/certs:ro
+    environment:
+      - CURVE=${CURVE:-p384}
+      - PORT=5007
+      - WORKERS=4
+    restart: unless-stopped

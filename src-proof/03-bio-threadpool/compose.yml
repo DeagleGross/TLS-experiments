@@ -1,0 +1,15 @@
+services:
+  csharp-tls-server-biossl:
+    build:
+      context: ../../src-dotnet/BioSslConsole
+      dockerfile: Dockerfile
+    container_name: csharp-tls-server-biossl
+    ports:
+      - "5003:5003"
+    cpuset: "0-3"
+    volumes:
+      - ../../certs:/app/certs:ro
+    environment:
+      - CURVE=${CURVE:-p384}
+      - PORT=5003
+    restart: unless-stopped

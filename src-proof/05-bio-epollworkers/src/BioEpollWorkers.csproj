@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>BioEpollWorkers</RootNamespace>
+    <AssemblyName>BioEpollWorkers</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Certs are mounted at runtime in Docker, only copy for local dev if they exist -->
+    <None Include="../../../certs/server-p256.crt" CopyToOutputDirectory="PreserveNewest" Link="certs/server-p256.crt" Condition="Exists('../../../certs/server-p256.crt')" />
+    <None Include="../../../certs/server-p256.key" CopyToOutputDirectory="PreserveNewest" Link="certs/server-p256.key" Condition="Exists('../../../certs/server-p256.key')" />
+    <None Include="../../../certs/server-p384.crt" CopyToOutputDirectory="PreserveNewest" Link="certs/server-p384.crt" Condition="Exists('../../../certs/server-p384.crt')" />
+    <None Include="../../../certs/server-p384.key" CopyToOutputDirectory="PreserveNewest" Link="certs/server-p384.key" Condition="Exists('../../../certs/server-p384.key')" />
+    <None Include="../../../certs/server.crt" CopyToOutputDirectory="PreserveNewest" Link="certs/server.crt" Condition="Exists('../../../certs/server.crt')" />
+    <None Include="../../../certs/server.key" CopyToOutputDirectory="PreserveNewest" Link="certs/server.key" Condition="Exists('../../../certs/server.key')" />
+    <None Include="native/libbio_native.so" CopyToOutputDirectory="PreserveNewest" Link="libbio_native.so" Condition="Exists('native/libbio_native.so')" />
+  </ItemGroup>
+
+</Project>

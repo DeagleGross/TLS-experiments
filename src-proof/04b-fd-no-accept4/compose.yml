@@ -1,0 +1,19 @@
+services:
+  csharp-tls-server-fd-no-accept4:
+    build:
+      context: ../../src-dotnet/DemoSemiUnmanagedSocket
+      dockerfile: Dockerfile
+    container_name: csharp-tls-server-fd-no-accept4
+    ports:
+      - "5009:5009"
+    cpuset: "0-3"
+    volumes:
+      - ../../certs:/app/certs:ro
+    environment:
+      - CURVE=${CURVE:-p384}
+      - PORT=5009
+      - WORKERS=4
+      # The variable under test: USE_ACCEPT4=0 forces accept() + fcntl(O_NONBLOCK)
+      # instead of accept4(SOCK_NONBLOCK). Everything else identical to exp 04.
+      - USE_ACCEPT4=0
+    restart: unless-stopped

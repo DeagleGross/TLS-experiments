@@ -1,0 +1,15 @@
+services:
+  csharp-tls-server-sslstream:
+    build:
+      context: ../../src-dotnet/SslStreamConsole
+      dockerfile: Dockerfile
+    container_name: csharp-tls-server-sslstream
+    ports:
+      - "5001:5001"
+    cpuset: "0-3"
+    volumes:
+      - ../../certs:/app/certs:ro
+    environment:
+      - CURVE=${CURVE:-p384}
+      - PORT=5001
+    restart: unless-stopped
