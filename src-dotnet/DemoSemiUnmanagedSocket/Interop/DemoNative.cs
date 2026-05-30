@@ -91,6 +91,27 @@ internal static class NativeSsl
     [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
     public static extern int accept_nonblocking(int listen_fd);
 
+    /// <summary>
+    /// Legacy variant: <c>accept()</c> + <c>fcntl(O_NONBLOCK)</c> instead of
+    /// <c>accept4(SOCK_NONBLOCK)</c>. Enabled when env var <c>USE_ACCEPT4=0</c>.
+    /// Used to isolate the cost of the extra syscall.
+    /// </summary>
+    [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int accept_nonblocking_legacy(int listen_fd);
+
+    /// <summary>
+    /// Enable <c>TCP_DEFER_ACCEPT</c> on a listen socket. The kernel will not
+    /// surface a new connection from accept() until the client has actually
+    /// sent some data (e.g. TLS ClientHello). Skips one worker wake per
+    /// connection. Linux only.
+    /// </summary>
+    /// <param name="listen_fd">The listening socket</param>
+    /// <param name="timeout_seconds">How long the kernel waits for data before
+    /// dropping the data-less connection. 1-5 s is reasonable.</param>
+    /// <returns>0 on success, -1 on error.</returns>
+    [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int set_tcp_defer_accept(int listen_fd, int timeout_seconds);
+
     // ========================================================================
     // Socket Utilities
     // ========================================================================

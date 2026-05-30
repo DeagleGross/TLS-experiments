@@ -1,0 +1,21 @@
+services:
+  csharp-tls-server-fd-defer-accept:
+    build:
+      context: ../../src-dotnet/DemoSemiUnmanagedSocket
+      dockerfile: Dockerfile
+    container_name: csharp-tls-server-fd-defer-accept
+    ports:
+      - "5010:5010"
+    cpuset: "0-3"
+    volumes:
+      - ../../certs:/app/certs:ro
+    environment:
+      - CURVE=${CURVE:-p384}
+      - PORT=5010
+      - WORKERS=4
+      # The variable under test: DEFER_ACCEPT_SEC=1 enables TCP_DEFER_ACCEPT on
+      # the listen socket. The kernel won't surface an accept() until the
+      # client has actually sent data (TLS ClientHello), skipping one worker
+      # wake per connection. Everything else identical to exp 04.
+      - DEFER_ACCEPT_SEC=1
+    restart: unless-stopped

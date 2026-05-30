@@ -507,3 +507,58 @@ int accept_nonblocking(int listen_fd) {
     
     return client_fd;
 }
+
+/**
+ * Legacy variant: accept() + fcntl(O_NONBLOCK) instead of accept4(SOCK_NONBLOCK).
+ * Used to isolate the cost of the extra syscall — answers the question:
+ * "how much does the `accept4` (TryAccept) syscall fusion actually save?"
+ *
+ * Returns:
+ *   >= 0: New client socket fd
+ *   -1: Would block (EAGAIN) - no pending connections
+ *   -2: Error
+ */
+int accept_nonblocking_legacy(int listen_fd) {
+    struct sockaddr_in client_addr;
+    socklen_t client_len = sizeof(client_addr);
+
+    int client_fd = accept(listen_fd, (struct sockaddr*)&client_addr, &client_len);
+
+    if (client_fd < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            return -1;
+        }
+        perror("[native] accept (legacy) failed");
+        return -2;
+    }
+
+    int flags = fcntl(client_fd, F_GETFL, 0);
+    if (flags == -1 || fcntl(client_fd, F_SETFL, flags | O_NONBLOCK) == -1) {
+        perror("[native] fcntl O_NONBLOCK failed");
+        close(client_fd);
+        return -2;
+    }
+
+    set_tcp_nodelay(client_fd);
+    return client_fd;
+}
+
+/**
+ * Enable TCP_DEFER_ACCEPT on a listen socket. Linux only.
+ * The kernel will not surface a new connection from accept() until the client
+ * has actually sent some data (e.g. TLS ClientHello). This skips one wakeup
+ * per connection.
+ *
+ * timeout_seconds: how long the kernel waits before giving up on the
+ *                  data-less connection. 1-5s is reasonable; 0 disables.
+ *
+ * Returns: 0 on success, -1 on error.
+ */
+int set_tcp_defer_accept(int listen_fd, int timeout_seconds) {
+    if (setsockopt(listen_fd, IPPROTO_TCP, TCP_DEFER_ACCEPT,
+                   &timeout_seconds, sizeof(timeout_seconds)) < 0) {
+        perror("[native] setsockopt TCP_DEFER_ACCEPT failed");
+        return -1;
+    }
+    return 0;
+}

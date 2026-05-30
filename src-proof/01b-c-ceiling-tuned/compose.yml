@@ -1,0 +1,15 @@
+services:
+  c-tls-server-tuned:
+    build:
+      context: ../../src
+      dockerfile: Dockerfile_async_mt_tuned
+    container_name: c-tls-server-tuned
+    ports:
+      - "6002:6002"
+    cpuset: "0-3"
+    volumes:
+      - ../../certs:/app/certs:ro
+    environment:
+      - CURVE=${CURVE:-p384}
+      - PORT=6002
+    restart: unless-stopped
