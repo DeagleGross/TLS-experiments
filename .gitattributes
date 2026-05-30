@@ -1,0 +1,19 @@
+# Auto-detect text files and normalize line endings to LF in the repo.
+# Working tree on Windows still gets CRLF on checkout when core.autocrlf=true;
+# this just guarantees the stored blob is always LF so cross-platform diffs stay clean.
+* text=auto eol=lf
+
+# Shell scripts must stay LF even on Windows checkouts (Docker / WSL would choke on CRLF).
+*.sh   text eol=lf
+*.bash text eol=lf
+
+# Explicit binaries — never touch these.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.pdf  binary
+*.zip  binary
+*.gz   binary
+*.tar  binary

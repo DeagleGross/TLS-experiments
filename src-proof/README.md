@@ -16,7 +16,7 @@ two rows is attributable to the one thing that actually changed between them.
 | Kernel | `5.15.153.1-microsoft-standard-WSL2` | Same epoll / accept / TCP stack |
 | OpenSSL | `libssl3` (Ubuntu 22.04 base in every image) | Same handshake, same AEAD, same ECDHE |
 | CPU pinning | `cpuset: "0-3"` (4 cores) on every container | Same compute budget |
-| Workers | 4 (epoll workers in 01/01b/04/04b/05/06; ThreadPool in 02/03 — both effectively cap at 4 cores) | Same parallelism |
+| Workers | 4 (epoll workers in 01/01b/04/04b/05/06; ThreadPool in 02/03; 64 dedicated OS threads in 04d; ThreadPool with `MinThreads=256` in 04c — **all effectively cap at 4 cores** because `cpuset: 0-3` lets the kernel schedule at most 4 simultaneously; the rest are parked in syscalls and cost ~zero CPU) | Same parallelism |
 | Cert | ECDSA **P-384** (`certs/server-p384.{crt,key}`, env `CURVE=p384`) | Same signature work per handshake |
 | ECDHE group | **X25519** (chosen by wrk's openssl client `key_share`; all servers accept it) | Same key-agreement work per handshake |
 | TLS version | **TLS 1.3** in practice on every run (see asymmetry note below) | Same handshake shape (1-RTT) |
@@ -64,6 +64,8 @@ All numbers from `cpuset: 0-3` (4 cores), wrk `-t64 -c500 -d10s` with `Connectio
 | 03 | mem-BIO + `Task.Run` | mem-BIO | ThreadPool | `TcpListener` | 5003 | 2648 | 698 | +98% | +105% |
 | 04 | **`SSL_set_fd` + epoll workers** | **`SSL_set_fd`** | epoll workers | `accept4` + `EPOLLEXCLUSIVE` | 5007 | **6756** | **2459** | **+406%** | **+623%** |
 | 04b | `SSL_set_fd` + epoll workers, **no `accept4`** | `SSL_set_fd` | epoll workers | `accept`+`fcntl` + `EPOLLEXCLUSIVE` | 5009 | 5997 | 2368 | +349% | +597% |
+| 04c | `SSL_set_fd` + **blocking** + ThreadPool (`MinThreads=256`) | `SSL_set_fd` | ThreadPool (`Task.Run`) | blocking `Socket.Accept()`, **no epoll anywhere** | 5011 | 6182 | 2113 | +363% | +521% |
+| 04d | `SSL_set_fd` + **blocking** + fixed 64-thread pool | `SSL_set_fd` | 64 dedicated OS `Thread`s | blocking `Socket.Accept()`, **no epoll anywhere** | 5012 | 7166 | 2166 | +436% | +537% |
 | 05 | **mem-BIO** + epoll workers | mem-BIO | epoll workers | `accept4` + `EPOLLEXCLUSIVE` | 5008 | 2720 | 690 | +104% | +103% |
 | 06 | `SSL_set_fd` + epoll workers + **`TCP_DEFER_ACCEPT`** | `SSL_set_fd` | epoll workers | `accept4` + `EPOLLEXCLUSIVE` + defer-accept | 5010 | 6172 | 2302 | +362% | +577% |
 
@@ -72,9 +74,11 @@ All numbers from `cpuset: 0-3` (4 cores), wrk `-t64 -c500 -d10s` with `Connectio
 > - 02 → `src-dotnet/SslStreamConsole`;
 > - 03 → `src-dotnet/BioSslConsole`;
 > - 04/04b/06 → `src-dotnet/DemoSemiUnmanagedSocket` (same image, different env vars);
+> - 04c → `src-proof/04c-fd-blocking-tp/src/`;
+> - 04d → `src-proof/04d-fd-blocking-workers/src/`;
 > - 05 → `src-proof/05-bio-epollworkers/src/`.
 
-All seven negotiate **TLS 1.3** when wrk is the client — see the
+All ten negotiate **TLS 1.3** when wrk is the client — see the
 "Controlled variables" section at the top of this README for the full
 list of what's pinned. The only practical remaining variable between
 04 and 05 (the headline pair) is the server-side session-cache mode:
@@ -96,6 +100,8 @@ patch `src-dotnet/DemoSemiUnmanagedSocket/Ssl/SslContext.cs` to add
 | 04 → 06 | adding `TCP_DEFER_ACCEPT(1)` | −9% | −6% | Defer-timer adds latency on fast-LAN traffic. Real value is DoS hardening, not throughput. |
 | **01 → 01b** | naive C → tuned C (3 micro-opts: `accept4` + `EPOLLEXCLUSIVE` + no `SSL_shutdown`) | **+36%** | **+36%** | The original 01 was not a real ceiling. The bulk of the gain is almost certainly `SSL_shutdown` (an encrypted close_notify per request). 01b is now the honest C ceiling. |
 | **04 vs 01b** | **C# fd-binding vs tuned C ceiling** | **−0.4%** (tie) | **−10%** | **The managed-runtime tax.** Same RPS, but C# uses ~10% more CPU. Closing this would require unmanaged hot-path code, not a different API shape. |
+| **04 → 04d** | **epoll alone** — `SSL_set_fd` everywhere; both use fixed pools of dedicated OS threads doing blocking syscalls (04 between epoll re-arms, 04d straight through the handshake); the only difference is whether the IO is driven by an epoll readiness state machine or by blocking `read`/`write` on the worker thread itself. | **−6%** | **+14%** |  On this exact workload (per-request handshake, `Connection: close`, loopback) epoll buys about **+14% CPU efficiency** — meaningful, not noise, and it accumulates on multi-core hosts where every saved core counts — but it's not the order-of-magnitude jump that `SSL_set_fd` itself delivers (+256% vs mem-BIO in the 04↔05 row above). It also **costs latency**: 04's avg / p99 are 24.8ms / 112ms vs 04d's 5.7ms / 56ms because epoll's `WANT_READ`/`WANT_WRITE` bouncing inflates per-handshake tail. |
+| 04d → 04c | **ThreadPool overhead alone** — both blocking, both no epoll; 04d uses a fixed pool of dedicated OS `Thread`s, 04c uses `Task.Run` onto the .NET ThreadPool (pre-tuned to `SetMinThreads(256, 256)` to remove hill-climbing as a confounder). | −14% | −2% | `Task.Run` allocation + global-queue enqueue + ThreadPool wake-up coalescing cost a measurable few percent of RPS/core even with hill-climbing disabled. Small but visible. Not a public-API axis — informs implementation choice for any consumer of the proposed handle, not the handle's shape. |
 
 > The two **bold rows on top (02→03 and 04 vs 05)** prove **two separate things, both required by the proposal**:
 > 1. `SafeTlsHandle` needs to **exist** as a public API at all (02→03: ~2× RPS just from removing SslStream's managed wrapping, with identical IO).
@@ -141,6 +147,8 @@ The full lookup table of `<port>` / `<container_name>` for each experiment:
 | `03-bio-threadpool`       | 5003 | `csharp-tls-server-biossl` |
 | `04-fd-epollworkers`      | 5007 | `csharp-tls-server-fd-epollworkers` |
 | `04b-fd-no-accept4`       | 5009 | `csharp-tls-server-fd-no-accept4` |
+| `04c-fd-blocking-tp`      | 5011 | `csharp-tls-server-fd-blocking-tp` |
+| `04d-fd-blocking-workers` | 5012 | `csharp-tls-server-fd-blocking-workers` |
 | `05-bio-epollworkers`     | 5008 | `csharp-tls-server-bio-epollworkers` |
 | `06-fd-defer-accept`      | 5010 | `csharp-tls-server-fd-defer-accept` |
 

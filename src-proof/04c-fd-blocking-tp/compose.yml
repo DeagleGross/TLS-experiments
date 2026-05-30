@@ -1,0 +1,28 @@
+services:
+  csharp-tls-server-fd-blocking-tp:
+    container_name: csharp-tls-server-fd-blocking-tp
+    build:
+      # Build context is THIS experiment's folder so the Dockerfile can see
+      # src/ and we never depend on src-dotnet/.
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "5011:5011"
+    volumes:
+      # Mount the shared certs from the repo root.
+      - ../../certs:/app/certs:ro
+    environment:
+      CURVE: p384
+      PORT: "5011"
+      # Pre-tune the .NET ThreadPool so the first wave of wrk connections
+      # doesn't pay for hill-climbing during the 10s bench window.
+      MIN_THREADS: "256"
+    # Fairness controls — match other proof experiments.
+    cpuset: "0-3"
+    cpus: 4
+    mem_limit: 2g
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    restart: "no"
