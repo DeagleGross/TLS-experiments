@@ -1,0 +1,25 @@
+services:
+  csharp-tls-server-fd-blocking-workers:
+    container_name: csharp-tls-server-fd-blocking-workers
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "5012:5012"
+    volumes:
+      - ../../certs:/app/certs:ro
+    environment:
+      CURVE: p384
+      PORT: "5012"
+      # Fixed-size dedicated OS-thread worker pool. NOT the .NET ThreadPool.
+      # 64 is enough to saturate 4 cores with wrk -c500 and ~10ms blocking
+      # handshakes without leaving requests queued behind blocked threads.
+      WORKERS: "64"
+    cpuset: "0-3"
+    cpus: 4
+    mem_limit: 2g
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    restart: "no"
